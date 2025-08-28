@@ -1,18 +1,18 @@
 import streamlit as st
+import os
 import pickle
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
+import pandas as pd
 from scipy.interpolate import interp1d
-import os
 import re
 from sklearn.neighbors import NearestNeighbors
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from umap import UMAP
 import tempfile
-from tqdm import tqdm
-from sklearn.metrics import pairwise_distances
+import base64
+from io import BytesIO
 
 # Set page configuration
 st.set_page_config(
@@ -25,10 +25,11 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
-    .main-header {font-size: 2.5rem; color: #1f77b4; margin-bottom: 1rem;}
-    .section-header {font-size: 1.8rem; color: #1f77b4; border-bottom: 2px solid #1f77b4; padding-bottom: 0.3rem; margin-top: 1.5rem;}
+    .main-header {font-size: 2.5rem; color: #1f77b4; text-align: center; margin-bottom: 2rem;}
+    .section-header {font-size: 1.8rem; color: #ff7f0e; margin-top: 2rem; margin-bottom: 1rem;}
     .info-box {background-color: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;}
     .stButton>button {width: 100%;}
+    .plot-container {border: 1px solid #ddd; border-radius: 0.5rem; padding: 1rem; margin-bottom: 1rem;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -37,10 +38,10 @@ def sanitize_filename(filename):
     invalid_chars = r'[<>:"/\\|?*]'
     return re.sub(invalid_chars, '_', filename)
 
-def load_model(model_file):
+def load_model(uploaded_file):
     """Carga el modelo entrenado desde un archivo subido"""
     try:
-        model = pickle.load(model_file)
+        model = pickle.load(uploaded_file)
         return model
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
@@ -60,158 +61,114 @@ def extract_molecule_formula(header):
         return formula
     return "Unknown"
 
-def load_and_interpolate_spectrum(file_content, filename, reference_frequencies):
-    """Carga un espectro desde contenido de archivo y lo interpola a las frecuencias de referencia"""
-    try:
-        # DEBUG: Mostrar información del archivo
-        st.write(f"Processing file: {filename}")
+def load_and_interpolate_spectrum(file_content, reference_frequencies, filename):
+    """Carga un espectro .txt y lo interpola a las frecuencias de referencia"""
+    lines = file_content.decode('utf-8').splitlines()
+    
+    # Determinar el formato del archivo
+    first_line = lines[0].strip()
+    second_line = lines[1].strip() if len(lines) > 1 else ""
+    
+    formula = "Unknown"
+    param_dict = {}
+    data_start_line = 0
+    
+    # Formato 1: con header de molécula y parámetros
+    if first_line.startswith('//') and 'molecules=' in first_line:
+        header = first_line[2:].strip()  # Remove the '//'
+        formula = extract_molecule_formula(header)
         
-        # Convertir el contenido a string adecuadamente
-        if hasattr(file_content, 'read'):
-            # Si es un objeto file-like, leer el contenido
-            content = file_content.read()
-            if isinstance(content, bytes):
+        # Extraer parámetros del header
+        for part in header.split():
+            if '=' in part:
                 try:
-                    content = content.decode('utf-8')
-                except UnicodeDecodeError:
-                    content = content.decode('latin-1')
-        elif isinstance(file_content, bytes):
-            # Si es bytes, decodificar
-            try:
-                content = file_content.decode('utf-8')
-            except UnicodeDecodeError:
-                content = file_content.decode('latin-1')
-        else:
-            # Si ya es string
-            content = str(file_content)
-        
-        lines = content.splitlines()
-        st.write(f"Number of lines: {len(lines)}")
-        
-        if not lines:
-            raise ValueError("Empty file")
-        
-        # Determinar el formato del archivo
-        first_line = lines[0].strip() if lines else ""
-        st.write(f"First line: '{first_line}'")
-        
-        formula = "Unknown"
-        param_dict = {}
-        data_start_line = 0
-        
-        # Formato 1: con header de molécula y parámetros
-        if first_line.startswith('//') and 'molecules=' in first_line:
-            header = first_line[2:].strip()
-            formula = extract_molecule_formula(header)
-            st.write(f"Format 1 detected. Formula: {formula}")
-            
-            # Extraer parámetros del header
-            for part in header.split():
-                if '=' in part:
-                    try:
-                        key, value = part.split('=')
-                        key = key.strip()
-                        value = value.strip("'")
-                        if key in ['molecules', 'sourcesize']:
-                            continue
-                        try:
-                            param_dict[key] = float(value)
-                        except ValueError:
-                            param_dict[key] = value
-                    except:
+                    key, value = part.split('=')
+                    key = key.strip()
+                    value = value.strip("'")
+                    if key in ['molecules', 'sourcesize']:
                         continue
-            data_start_line = 1
-        
-        # Formato 2: con header de columnas
-        elif first_line.startswith('!') or first_line.startswith('#'):
-            st.write("Format 2 detected")
-            if 'molecules=' in first_line:
-                formula = extract_molecule_formula(first_line)
-            data_start_line = 1
-        
-        # Formato 3: sin header, solo datos
-        else:
-            st.write("Format 3 detected - no header")
-            data_start_line = 0
-            formula = os.path.splitext(filename)[0]  # Usar nombre del archivo como fórmula
+                    try:
+                        param_dict[key] = float(value)
+                    except ValueError:
+                        param_dict[key] = value
+                except:
+                    continue
+        data_start_line = 1
+    
+    # Formato 2: con header de columnas
+    elif first_line.startswith('!') or first_line.startswith('#'):
+        # Intentar extraer información del header si está disponible
+        if 'molecules=' in first_line:
+            formula = extract_molecule_formula(first_line)
+        data_start_line = 1
+    
+    # Formato 3: sin header, solo datos
+    else:
+        data_start_line = 0
+        formula = filename.split('.')[0]  # Usar nombre del archivo como fórmula
 
-        spectrum_data = []
-        line_number = data_start_line
-        
-        st.write(f"Starting data at line: {data_start_line}")
-        
-        for line in lines[data_start_line:]:
-            line_number += 1
-            line = line.strip()
+    spectrum_data = []
+    for line in lines[data_start_line:]:
+        line = line.strip()
+        # Saltar líneas de comentario o vacías
+        if not line or line.startswith('!') or line.startswith('#'):
+            continue
             
-            # Saltar líneas de comentario o vacías
-            if not line or line.startswith('!') or line.startswith('#') or line.startswith('//'):
-                continue
-                
-            try:
-                parts = line.split()
-                if len(parts) < 2:
-                    continue
-                
-                # Limpiar y procesar los valores
-                freq_part = parts[0].strip()
-                intensity_part = parts[1].strip()
-                
-                # Reemplazar D/d con E para notación científica
-                freq_clean = freq_part.replace('D', 'E').replace('d', 'E')
-                intensity_clean = intensity_part.replace('D', 'E').replace('d', 'E')
-                
-                # Remover caracteres no numéricos (excepto . - + E e)
-                freq_clean = re.sub(r'[^\d\.\-+Ee]', '', freq_clean)
-                intensity_clean = re.sub(r'[^\d\.\-+Ee]', '', intensity_clean)
-                
-                if not freq_clean or not intensity_clean:
-                    continue
-                
-                freq = float(freq_clean)
-                intensity = float(intensity_clean)
+        try:
+            parts = line.split()
+            if len(parts) >= 2:
+                # Intentar diferentes formatos de números
+                try:
+                    freq = float(parts[0])
+                    intensity = float(parts[1])
+                except ValueError:
+                    # Intentar con notación científica que pueda tener D instead of E
+                    freq_str = parts[0].replace('D', 'E').replace('d', 'E')
+                    intensity_str = parts[1].replace('D', 'E').replace('d', 'E')
+                    freq = float(freq_str)
+                    intensity = float(intensity_str)
                 
                 if np.isfinite(freq) and np.isfinite(intensity):
                     spectrum_data.append([freq, intensity])
-                    
-            except Exception as e:
-                st.warning(f"Could not parse line {line_number}: '{line}' - {str(e)}")
-                continue
+        except Exception as e:
+            st.warning(f"Could not parse line '{line}': {e}")
+            continue
 
-        if not spectrum_data:
-            raise ValueError("No valid data points found in spectrum file")
+    if not spectrum_data:
+        raise ValueError("No valid data points found in spectrum file")
 
-        spectrum_data = np.array(spectrum_data)
-        st.write(f"Found {len(spectrum_data)} data points")
+    spectrum_data = np.array(spectrum_data)
 
-        # Ajustar frecuencia si está en GHz (convertir a Hz)
-        if np.max(spectrum_data[:, 0]) < 1e11:
-            spectrum_data[:, 0] = spectrum_data[:, 0] * 1e9
-            st.info(f"Converted frequencies from GHz to Hz for {filename}")
+    # Ajustar frecuencia si está en GHz (convertir a Hz)
+    if np.max(spectrum_data[:, 0]) < 1e11:  # Si las frecuencias son menores a 100 GHz, probablemente están en GHz
+        spectrum_data[:, 0] = spectrum_data[:, 0] * 1e9  # Convertir GHz to Hz
+        st.info(f"Converted frequencies from GHz to Hz for {filename}")
 
-        # Interpolar
-        interpolator = interp1d(spectrum_data[:, 0], spectrum_data[:, 1],
-                                kind='linear', bounds_error=False, fill_value=0.0)
-        interpolated = interpolator(reference_frequencies)
+    interpolator = interp1d(spectrum_data[:, 0], spectrum_data[:, 1],
+                            kind='linear', bounds_error=False, fill_value=0.0)
+    interpolated = interpolator(reference_frequencies)
 
-        # Extraer parámetros
-        params = [
-            param_dict.get('logn', np.nan),
-            param_dict.get('tex', np.nan),
-            param_dict.get('velo', np.nan),
-            param_dict.get('fwhm', np.nan)
-        ]
-        
-        safe_filename = sanitize_filename(os.path.basename(filename))[:60]
-        
-        st.success(f"Successfully processed {filename}")
-        return spectrum_data, interpolated, formula, params, safe_filename
+    # Extraer parámetros con valores por defecto si faltan
+    params = [
+        param_dict.get('logn', np.nan),
+        param_dict.get('tex', np.nan),
+        param_dict.get('velo', np.nan),
+        param_dict.get('fwhm', np.nan)
+    ]
 
-    except Exception as e:
-        st.error(f"Error processing {filename}: {str(e)}")
-        import traceback
-        st.error(f"Traceback: {traceback.format_exc()}")
-        raise
+    return spectrum_data, interpolated, formula, params, filename
+
+def plot_example_spectrum(spectrum_data, interpolated, reference_frequencies, formula, filename):
+    """Grafica el espectro original vs interpolado"""
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(spectrum_data[:, 0], spectrum_data[:, 1], label='Original', alpha=0.7)
+    ax.plot(reference_frequencies, interpolated, label='Interpolated', lw=2)
+    ax.set_xlabel('Frequency (Hz)')
+    ax.set_ylabel('Intensity')
+    ax.set_title(f'Example Spectrum: {filename}\nFormula: {formula}')
+    ax.legend()
+    ax.grid(True, alpha=0.4)
+    return fig
 
 def find_knn_neighbors(training_embeddings, new_embeddings, k=5):
     """Encuentra los k vecinos más cercanos usando KNN"""
@@ -233,419 +190,393 @@ def find_knn_neighbors(training_embeddings, new_embeddings, k=5):
     
     return all_neighbor_indices
 
-def create_safe_dataframe_for_plotting(model, results):
-    """Create a safe DataFrame for plotting with proper data validation"""
-    try:
-        # Create training data
-        train_data = {
-            'umap_x': model['embedding'][:, 0].astype(float),
-            'umap_y': model['embedding'][:, 1].ast(float),
-            'formula': [str(f) for f in model['formulas']],
-            'logn': model['y'][:, 0].astype(float),
-            'tex': model['y'][:, 1].astype(float),
-            'velo': model['y'][:, 2].astype(float),
-            'fwhm': model['y'][:, 3].astype(float),
-            'type': 'Training'
-        }
-        
-        # Add filename to training data if available
-        if 'filenames' in model and len(model['filenames']) == len(model['formulas']):
-            train_data['filename'] = [str(f) for f in model['filenames']]
-        
-        train_df = pd.DataFrame(train_data)
-        
-        # Create new data if available
-        if results and 'umap_embedding_new' in results and len(results['umap_embedding_new']) > 0:
-            new_data = {
-                'umap_x': results['umap_embedding_new'][:, 0].astype(float),
-                'umap_y': results['umap_embedding_new'][:, 1].astype(float),
-                'formula': [str(f) for f in results['formulas_new']],
-                'logn': results['y_new'][:, 0].astype(float),
-                'tex': results['y_new'][:, 1].astype(float),
-                'velo': results['y_new'][:, 2].astype(float),
-                'fwhm': results['y_new'][:, 3].astype(float),
-                'filename': [str(f) for f in results['filenames_new']],
-                'type': 'New'
-            }
-            
-            new_df = pd.DataFrame(new_data)
-            combined_df = pd.concat([train_df, new_df], ignore_index=True)
-        else:
-            combined_df = train_df
-            
-        # Ensure all columns are of proper type
-        for col in combined_df.columns:
-            if combined_df[col].dtype == 'object':
-                combined_df[col] = combined_df[col].astype(str)
-                
-        return combined_df
-        
-    except Exception as e:
-        st.error(f"Error creating DataFrame for plotting: {str(e)}")
-        # Return empty DataFrame as fallback
-        return pd.DataFrame()
+def plot_pca_cumulative_variance(cumulative_variance, variance_threshold, n_components):
+    """Plot PCA cumulative explained variance"""
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(range(1, len(cumulative_variance)+1), cumulative_variance, 'b-o')
+    ax.axhline(y=variance_threshold, color='r', linestyle='--', label=f'{variance_threshold*100:.1f}% variance')
+    ax.axvline(x=n_components, color='r', linestyle='--', label=f'{n_components} components')
+    ax.set_xlabel('Number of Components')
+    ax.set_ylabel('Cumulative Explained Variance')
+    ax.set_title('PCA Cumulative Explained Variance')
+    ax.grid(True)
+    ax.legend()
+    return fig
 
-def ensure_umap_compatibility(umap_model, X_pca):
-    """Asegura que los datos sean compatibles con el modelo UMAP"""
-    try:
-        # Verificar dimensiones
-        if X_pca.shape[1] != umap_model.n_features_in_:
-            st.warning(f"Dimension mismatch: Expected {umap_model.n_features_in_} features, got {X_pca.shape[1]}")
-            
-            # Ajustar dimensiones
-            if X_pca.shape[1] > umap_model.n_features_in_:
-                # Tomar solo las primeras n componentes necesarias
-                X_pca = X_pca[:, :umap_model.n_features_in_]
-            else:
-                # Padding con ceros para las dimensiones faltantes
-                padding = np.zeros((X_pca.shape[0], umap_model.n_features_in_ - X_pca.shape[1]))
-                X_pca = np.hstack([X_pca, padding])
-        
-        # Verificar que no haya NaN o infinitos
-        if np.any(np.isnan(X_pca)) or np.any(np.isinf(X_pca)):
-            st.warning("NaN or Inf values detected in PCA data. Replacing with zeros.")
-            X_pca = np.nan_to_num(X_pca, nan=0.0, posinf=0.0, neginf=0.0)
-        
-        return X_pca
-        
-    except Exception as e:
-        st.error(f"Error in UMAP compatibility check: {str(e)}")
-        return X_pca
+def plot_pca_components(pca_components, reference_frequencies, n_components):
+    """Plot first few PCA components"""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for i in range(min(5, n_components)):
+        ax.plot(reference_frequencies, pca_components[i], label=f'PC {i+1}')
+    ax.set_xlabel('Frequency (Hz)')
+    ax.set_ylabel('Component Value')
+    ax.set_title('First 5 Principal Components')
+    ax.legend()
+    ax.grid(True)
+    return fig
 
-def analyze_spectra(model, spectra_files, knn_neighbors=5):
-    """Analyze uploaded spectra using the trained model"""
-    results = {
-        'X_new': [],
-        'y_new': [],
-        'formulas_new': [],
-        'filenames_new': [],
-        'pca_components_new': [],
-        'umap_embedding_new': [],
-        'knn_neighbors': []
-    }
+def plot_umap_predictions(embedding_train, y_train, embedding_new, y_new, formulas_new, param_names, param_labels):
+    """Plot UMAP with training and prediction data colored by parameters"""
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    axes = axes.ravel()
     
-    # Get model components
-    scaler = model['scaler']
-    pca = model['pca']
-    umap_model = model['umap']
-    ref_freqs = model['reference_frequencies']
-    
-    # Process each spectrum
-    successful_files = 0
-    for spectrum_file in spectra_files:
-        try:
-            st.write(f"Processing: {spectrum_file.name}")
-            
-            # Reset file pointer and read content
-            if hasattr(spectrum_file, 'seek'):
-                spectrum_file.seek(0)
-            file_content = spectrum_file.read()
-            
-            spectrum_data, interpolated, formula, params, filename = load_and_interpolate_spectrum(
-                file_content, spectrum_file.name, ref_freqs
-            )
-            
-            # Transformar el espectro
-            X_scaled = scaler.transform([interpolated])
-            X_pca = pca.transform(X_scaled)
-            
-            # Asegurar compatibilidad con UMAP
-            X_pca_processed = ensure_umap_compatibility(umap_model, X_pca)
-            
-            # Proyección UMAP con manejo robusto de errores
-            try:
-                X_umap = umap_model.transform(X_pca_processed)
-                
-                # Verificar que la proyección sea válida
-                if np.any(np.isnan(X_umap)) or np.any(np.isinf(X_umap)):
-                    raise ValueError("UMAP projection contains NaN or Inf values")
-                    
-            except Exception as umap_error:
-                st.warning(f"UMAP transformation failed for {filename}: {umap_error}")
-                st.warning("Using robust alternative embedding method...")
-                
-                # Método alternativo MEJORADO basado en distancias al training set
-                train_embeddings = model['embedding']
-                train_pca = model.get('pca_components', X_pca_processed)
-                
-                # Calcular distancias a todos los puntos de entrenamiento
-                distances = pairwise_distances(X_pca_processed, train_pca)
-                
-                # Encontrar el vecino más cercano
-                nearest_idx = np.argmin(distances)
-                
-                # Usar la posición del vecino más cercano con pequeño ruido aleatorio
-                X_umap = train_embeddings[nearest_idx:nearest_idx+1] + np.random.normal(0, 0.1, size=(1, 2))
-            
-            results['X_new'].append(interpolated)
-            results['formulas_new'].append(formula)
-            results['y_new'].append(params)
-            results['filenames_new'].append(filename)
-            results['umap_embedding_new'].append(X_umap[0])
-            results['pca_components_new'].append(X_pca[0])
-            
-            successful_files += 1
-            
-        except Exception as e:
-            st.error(f"Error processing {spectrum_file.name}: {str(e)}")
-            import traceback
-            st.error(f"Detailed error: {traceback.format_exc()}")
-            continue
-    
-    st.info(f"Successfully processed {successful_files} out of {len(spectra_files)} spectrum files.")
-    
-    # Convert to arrays
-    if results['umap_embedding_new']:
-        results['X_new'] = np.array(results['X_new'])
-        results['y_new'] = np.array(results['y_new'])
-        results['formulas_new'] = np.array(results['formulas_new'])
-        results['umap_embedding_new'] = np.array(results['umap_embedding_new'])
-        results['pca_components_new'] = np.array(results['pca_components_new'])
-        
-        # Find KNN neighbors
-        results['knn_neighbors'] = find_knn_neighbors(
-            model['embedding'], results['umap_embedding_new'], k=knn_neighbors
-        )
-    else:
-        st.error("No valid spectra could be processed. Please check your spectrum files.")
-    
-    return results
+    for i, (ax, param_name, param_label) in enumerate(zip(axes, param_names, param_labels)):
+        # Plot training data
+        param_values_train = y_train[:, i]
+        sc_train = ax.scatter(embedding_train[:, 0], embedding_train[:, 1], 
+                             c=param_values_train, cmap='viridis', alpha=0.4, s=8, label='Training')
 
-def main():
-    st.title("🧪 Molecular Spectrum Analyzer")
-    st.markdown("""
-    This interactive tool analyzes molecular spectra using a pre-trained machine learning model. 
-    Upload your model and spectrum files to visualize the results.
-    """)
-    
-    # Initialize session state
-    if 'model' not in st.session_state:
-        st.session_state.model = None
-    if 'results' not in st.session_state:
-        st.session_state.results = None
-    if 'spectra_files' not in st.session_state:
-        st.session_state.spectra_files = []
-    
-    # Sidebar for inputs
-    with st.sidebar:
-        st.header("Input Parameters")
-        
-        # Model upload
-        st.subheader("1. Upload Model")
-        model_file = st.file_uploader("Upload trained model (PKL file)", type=['pkl'])
-        
-        if model_file is not None:
-            if st.button("Load Model") or st.session_state.model is None:
-                with st.spinner("Loading model..."):
-                    st.session_state.model = load_model(model_file)
-                    if st.session_state.model is not None:
-                        st.success("Model loaded successfully!")
-        
-        # Spectra upload
-        st.subheader("2. Upload Spectra")
-        spectra_files = st.file_uploader("Upload spectrum files (TXT)", type=['txt'], accept_multiple_files=True)
-        
-        if spectra_files:
-            st.session_state.spectra_files = spectra_files
-        
-        # Analysis parameters
-        st.subheader("3. Analysis Parameters")
-        knn_neighbors = st.slider("Number of KNN neighbors", min_value=1, max_value=20, value=5)
-        
-        if st.button("Analyze Spectra") and st.session_state.model is not None and st.session_state.spectra_files:
-            with st.spinner("Analyzing spectra..."):
-                try:
-                    model = st.session_state.model
-                    results = analyze_spectra(model, st.session_state.spectra_files, knn_neighbors)
-                    st.session_state.results = results
-                    st.success("Analysis completed!")
-                except Exception as e:
-                    st.error(f"Error during analysis: {str(e)}")
-    
-    # Main content area
-    if st.session_state.model is None:
-        st.info("Please upload a model file to get started.")
-        return
-    
-    model = st.session_state.model
-    
-    # Display model information
-    with st.expander("Model Information", expanded=True):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Training Samples", len(model['formulas']))
-        with col2:
-            st.metric("PCA Components", model.get('n_components', 'N/A'))
-        with col3:
-            st.metric("Variance Threshold", f"{model.get('variance_threshold', 0.99)*100:.1f}%")
-    
-    if st.session_state.results is None:
-        st.info("Upload spectrum files and click 'Analyze Spectra' to see results.")
-        return
-    
-    results = st.session_state.results
-    
-    # Display results
-    st.header("Analysis Results")
-    
-    # UMAP Visualization
-    st.subheader("UMAP Projection")
-    
-    # Create safe DataFrame for plotting
-    combined_df = create_safe_dataframe_for_plotting(model, results)
-    
-    if combined_df.empty:
-        st.error("Could not create visualization data. Please check your model and data.")
-        return
-    
-    # Create interactive UMAP plot with error handling
-    try:
-        # Check if filename column exists for hover data
-        hover_data = ['logn', 'tex', 'velo', 'fwhm']
-        if 'filename' in combined_df.columns:
-            hover_data.append('filename')
-            
-        fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='formula', 
-                         symbol='type', hover_data=hover_data,
-                         title='UMAP Projection of Molecular Spectra')
-        st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"Error creating UMAP plot: {str(e)}")
-        # Fallback: show simple scatter plot
-        fig, ax = plt.subplots(figsize=(10, 6))
-        for formula in combined_df['formula'].unique():
-            mask = combined_df['formula'] == formula
-            ax.scatter(combined_df.loc[mask, 'umap_x'], combined_df.loc[mask, 'umap_y'], 
-                      label=formula, alpha=0.6)
+        # Plot new predictions
+        param_values_new = y_new[:, i]
+        sc_new = ax.scatter(embedding_new[:, 0], embedding_new[:, 1], 
+                           c=param_values_new, cmap='plasma', alpha=1.0, s=100, 
+                           marker='X', edgecolors='red', linewidth=2, label='New Predictions')
+
+        cbar = plt.colorbar(sc_train, ax=ax)
+        cbar.set_label(param_label)
+
+        ax.set_title(f'UMAP: {param_name} (Training + Predictions)')
         ax.set_xlabel('UMAP 1')
         ax.set_ylabel('UMAP 2')
-        ax.set_title('UMAP Projection of Molecular Spectra')
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        ax.grid(True, alpha=0.3)
-        st.pyplot(fig)
+        ax.grid(True)
+        ax.legend()
+
+        # Add labels for new predictions
+        for j in range(len(embedding_new)):
+            ax.annotate(formulas_new[j], (embedding_new[j, 0], embedding_new[j, 1]),
+                       fontsize=8, alpha=0.9, xytext=(5, 5), textcoords='offset points',
+                       bbox=dict(boxstyle="round,pad=0.2", facecolor='yellow', alpha=0.8))
     
-    # Parameter distribution plots
-    st.subheader("Parameter Distributions")
+    plt.tight_layout()
+    return fig
+
+def plot_umap_formulas(embedding_train, formulas_train, embedding_new, formulas_new):
+    """Plot UMAP colored by molecular formula"""
+    all_formulas = np.concatenate([formulas_train, formulas_new])
+    unique_formulas = np.unique(all_formulas)
+
+    # Create color map
+    colors = plt.cm.tab20(np.linspace(0, 1, len(unique_formulas)))
+    formula_to_color = {formula: color for formula, color in zip(unique_formulas, colors)}
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Plot training data
+    for formula in np.unique(formulas_train):
+        mask = formulas_train == formula
+        color = formula_to_color[formula]
+        ax.scatter(embedding_train[mask, 0], embedding_train[mask, 1], 
+                   color=color, alpha=0.4, s=15, label=f'{formula} (Train)')
+
+    # Plot new predictions with stars
+    for formula in np.unique(formulas_new):
+        mask = formulas_new == formula
+        color = formula_to_color[formula]
+        ax.scatter(embedding_new[mask, 0], embedding_new[mask, 1], 
+                   color=color, marker='*', s=200, edgecolors='black', linewidth=2,
+                   alpha=1.0, label=f'{formula} (New)')
+
+    ax.set_title('UMAP: Molecular Formula (Training + Predictions)')
+    ax.set_xlabel('UMAP 1')
+    ax.set_ylabel('UMAP 2')
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.grid(True, alpha=0.3)
     
+    return fig
+
+def plot_umap_knn(embedding_train, embedding_new, knn_indices, formulas_new, filenames_new):
+    """Plot UMAP with KNN connections"""
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Plot all training data
+    ax.scatter(embedding_train[:, 0], embedding_train[:, 1], 
+                c='lightgray', alpha=0.3, s=15, label='Training Data')
+    
+    # Plot KNN neighbors for each prediction
+    for i, (new_embedding, indices) in enumerate(zip(embedding_new, knn_indices)):
+        if indices:  # Solo si hay vecinos válidos
+            # Plot neighbors
+            ax.scatter(embedding_train[indices, 0], embedding_train[indices, 1],
+                       c='blue', alpha=0.6, s=50, label='KNN Neighbors' if i == 0 else "")
+            
+            # Plot prediction
+            ax.scatter(new_embedding[0], new_embedding[1], 
+                       c='red', s=200, marker='*', edgecolors='black', 
+                       linewidth=2, label=f'Prediction {i+1}' if i == 0 else "")
+            
+            # Connect prediction to neighbors
+            for idx in indices:
+                ax.plot([new_embedding[0], embedding_train[idx, 0]],
+                         [new_embedding[1], embedding_train[idx, 1]],
+                         'gray', alpha=0.3, linestyle='--')
+    
+    # Add labels for new predictions
+    for i in range(len(embedding_new)):
+        ax.annotate(filenames_new[i], (embedding_new[i, 0], embedding_new[i, 1]),
+                   fontsize=8, alpha=0.9, xytext=(5, 5), textcoords='offset points',
+                   bbox=dict(boxstyle="round,pad=0.2", facecolor='yellow', alpha=0.8))
+    
+    ax.set_title('UMAP: K-Nearest Neighbors Analysis')
+    ax.set_xlabel('UMAP 1')
+    ax.set_ylabel('UMAP 2')
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.grid(True, alpha=0.3)
+    
+    return fig
+
+def plot_3d_umap(embedding_train, y_train, embedding_new, y_new, param_name, param_label):
+    """Create 3D UMAP plot with parameter as Z-axis"""
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Get the parameter index
     param_names = ['logn', 'tex', 'velo', 'fwhm']
-    param_labels = ['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
+    param_idx = param_names.index(param_name)
     
-    # Create subplots for each parameter
-    try:
-        fig = make_subplots(rows=2, cols=2, subplot_titles=param_labels)
-        
-        for i, param in enumerate(param_names):
-            row = (i // 2) + 1
-            col = (i % 2) + 1
-            
-            # Add training data
-            train_mask = combined_df['type'] == 'Training'
-            fig.add_trace(
-                go.Histogram(x=combined_df.loc[train_mask, param], name='Training', opacity=0.7, marker_color='blue'),
-                row=row, col=col
-            )
-            
-            # Add new data if available
-            new_mask = combined_df['type'] == 'New'
-            if new_mask.any():
-                fig.add_trace(
-                    go.Histogram(x=combined_df.loc[new_mask, param], name='New', opacity=0.7, marker_color='red'),
-                    row=row, col=col
-                )
-        
-        fig.update_layout(height=600, showlegend=False, title_text="Parameter Distributions")
-        st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"Error creating parameter distribution plots: {str(e)}")
+    # Training data
+    param_values_train = y_train[:, param_idx]
+    sc_train = ax.scatter(embedding_train[:, 0], embedding_train[:, 1], param_values_train,
+                        c=param_values_train, cmap='viridis', alpha=0.4, s=20, depthshade=True, label='Training')
+
+    # New predictions
+    param_values_new = y_new[:, param_idx]
+    sc_new = ax.scatter(embedding_new[:, 0], embedding_new[:, 1], param_values_new,
+                      c=param_values_new, cmap='plasma', alpha=1.0, s=100, marker='X', 
+                      edgecolors='red', linewidth=2, depthshade=True, label='New Predictions')
+
+    cbar = plt.colorbar(sc_train, ax=ax, shrink=0.5)
+    cbar.set_label(param_label)
+
+    ax.set_title(f'3D UMAP: {param_name} as Z-axis (Training + Predictions)')
+    ax.set_xlabel('UMAP 1')
+    ax.set_ylabel('UMAP 2')
+    ax.set_zlabel(param_label)
+    ax.legend()
+
+    ax.view_init(elev=20, azim=45)
+    plt.tight_layout()
     
-    # Individual spectrum analysis
-    if 'umap_embedding_new' in results and len(results['umap_embedding_new']) > 0:
-        st.subheader("Individual Spectrum Analysis")
+    return fig
+
+def main():
+    st.title("🧪 Molecular Spectrum Analyzer with PCA/UMAP")
+    st.markdown("""
+    This app analyzes molecular spectra using PCA and UMAP dimensionality reduction techniques.
+    Upload a trained model and new spectrum files to visualize their projections.
+    """)
+    
+    # Sidebar for file uploads
+    with st.sidebar:
+        st.header("Upload Files")
         
-        # Select a spectrum to analyze
-        selected_idx = st.selectbox("Select a spectrum for detailed analysis", 
-                                   range(len(results['filenames_new'])),
-                                   format_func=lambda i: results['filenames_new'][i])
+        # Model upload
+        uploaded_model = st.file_uploader("Upload Trained Model (.pkl)", type=['pkl'])
         
-        if selected_idx is not None:
-            col1, col2 = st.columns(2)
+        # Spectrum files upload
+        uploaded_spectra = st.file_uploader("Upload Spectrum Files (.txt)", type=['txt'], accept_multiple_files=True)
+        
+        # Parameters
+        st.header("Parameters")
+        knn_neighbors = st.slider("Number of KNN Neighbors", min_value=1, max_value=20, value=5)
+        
+        # Process button
+        process_btn = st.button("Process Spectra", type="primary")
+    
+    # Main content
+    if uploaded_model and uploaded_spectra and process_btn:
+        with st.spinner("Loading model and processing spectra..."):
+            # Load model
+            model = load_model(uploaded_model)
             
-            with col1:
-                # Show spectrum plot
-                st.markdown("**Spectrum Visualization**")
-                fig, ax = plt.subplots(figsize=(10, 6))
-                ax.plot(model['reference_frequencies'], results['X_new'][selected_idx])
-                ax.set_xlabel('Frequency (Hz)')
-                ax.set_ylabel('Intensity')
-                ax.set_title(f"Spectrum: {results['filenames_new'][selected_idx]}")
-                ax.grid(True, alpha=0.3)
-                st.pyplot(fig)
-            
-            with col2:
-                # Show parameters
-                st.markdown("**Estimated Parameters**")
-                param_data = {
-                    'Parameter': param_labels,
-                    'Value': [
-                        results['y_new'][selected_idx, 0],
-                        results['y_new'][selected_idx, 1],
-                        results['y_new'][selected_idx, 2],
-                        results['y_new'][selected_idx, 3]
-                    ]
-                }
-                st.table(pd.DataFrame(param_data))
+            if model:
+                st.success("Model loaded successfully!")
                 
-                # Show molecule formula
-                st.markdown(f"**Molecule Formula**: {results['formulas_new'][selected_idx]}")
-            
-            # KNN Neighbors analysis
-            st.markdown("**K-Nearest Neighbors Analysis**")
-            
-            if 'knn_neighbors' in results and selected_idx < len(results['knn_neighbors']):
-                neighbor_indices = results['knn_neighbors'][selected_idx]
+                # Display model info
+                with st.expander("Model Information"):
+                    st.write(f"Training samples: {model.get('sample_size', 'N/A')}")
+                    st.write(f"Number of PCA components: {model.get('n_components', 'N/A')}")
+                    st.write(f"Variance threshold: {model.get('variance_threshold', 'N/A')}")
+                    st.write(f"Target length: {model.get('target_length', 'N/A')}")
                 
-                if neighbor_indices:
-                    # Create table of neighbors
-                    neighbor_data = []
-                    for idx in neighbor_indices:
-                        neighbor_data.append({
-                            'Formula': model['formulas'][idx],
-                            'log(n)': f"{model['y'][idx, 0]:.2f}",
-                            'T_ex (K)': f"{model['y'][idx, 1]:.2f}",
-                            'Velocity': f"{model['y'][idx, 2]:.2f}",
-                            'FWHM': f"{model['y'][idx, 3]:.2f}"
-                        })
+                # Process spectra
+                scaler = model['scaler']
+                pca = model['pca']
+                umap_model = model['umap']
+                ref_freqs = model['reference_frequencies']
+                
+                new_spectra_data = []
+                new_formulas = []
+                new_params = []
+                new_filenames = []
+                new_embeddings = []
+                new_pca_components = []
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i, uploaded_file in enumerate(uploaded_spectra):
+                    status_text.text(f"Processing {uploaded_file.name} ({i+1}/{len(uploaded_spectra)})")
+                    try:
+                        spectrum_data, interpolated, formula, params, filename = load_and_interpolate_spectrum(
+                            uploaded_file.getvalue(), ref_freqs, uploaded_file.name
+                        )
+                        
+                        # Transform the spectrum
+                        X_scaled = scaler.transform([interpolated])
+                        X_pca = pca.transform(X_scaled)
+                        X_umap = umap_model.transform(X_pca)
+                        
+                        new_spectra_data.append(interpolated)
+                        new_formulas.append(formula)
+                        new_params.append(params)
+                        new_filenames.append(filename)
+                        new_embeddings.append(X_umap[0])
+                        new_pca_components.append(X_pca[0])
+                        
+                    except Exception as e:
+                        st.error(f"Error processing {uploaded_file.name}: {e}")
                     
-                    st.table(pd.DataFrame(neighbor_data))
-                else:
-                    st.info("No neighbors found for this spectrum.")
+                    progress_bar.progress((i + 1) / len(uploaded_spectra))
+                
+                if not new_embeddings:
+                    st.error("No valid spectra found for prediction")
+                    return
+                
+                new_embeddings = np.array(new_embeddings)
+                new_params = np.array(new_params)
+                new_formulas = np.array(new_formulas)
+                new_pca_components = np.array(new_pca_components)
+                
+                st.success(f"Successfully processed {len(new_embeddings)} spectra!")
+                
+                # Find KNN neighbors
+                knn_indices = find_knn_neighbors(model['embedding'], new_embeddings, k=knn_neighbors)
+                
+                # Display results
+                st.header("Results")
+                
+                # PCA Analysis
+                st.subheader("PCA Analysis")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    fig_pca_var = plot_pca_cumulative_variance(
+                        model['cumulative_variance'], 
+                        model.get('variance_threshold', 0.95), 
+                        model.get('n_components', 50)
+                    )
+                    st.pyplot(fig_pca_var)
+                
+                with col2:
+                    fig_pca_comp = plot_pca_components(
+                        model['pca'].components_, 
+                        model['reference_frequencies'], 
+                        model.get('n_components', 50)
+                    )
+                    st.pyplot(fig_pca_comp)
+                
+                # UMAP Visualizations
+                st.subheader("UMAP Visualizations")
+                
+                # UMAP by parameters
+                param_names = ['logn', 'tex', 'velo', 'fwhm']
+                param_labels = ['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
+                
+                fig_umap_params = plot_umap_predictions(
+                    model['embedding'], model['y'], 
+                    new_embeddings, new_params, new_formulas,
+                    param_names, param_labels
+                )
+                st.pyplot(fig_umap_params)
+                
+                # UMAP by formula
+                fig_umap_formula = plot_umap_formulas(
+                    model['embedding'], model['formulas'],
+                    new_embeddings, new_formulas
+                )
+                st.pyplot(fig_umap_formula)
+                
+                # UMAP with KNN
+                fig_umap_knn = plot_umap_knn(
+                    model['embedding'], new_embeddings, 
+                    knn_indices, new_formulas, new_filenames
+                )
+                st.pyplot(fig_umap_knn)
+                
+                # 3D UMAP plots
+                st.subheader("3D UMAP Visualizations")
+                param_option = st.selectbox("Select parameter for Z-axis", param_names)
+                param_label = param_labels[param_names.index(param_option)]
+                
+                fig_3d = plot_3d_umap(
+                    model['embedding'], model['y'],
+                    new_embeddings, new_params,
+                    param_option, param_label
+                )
+                st.pyplot(fig_3d)
+                
+                # Example spectrum plot
+                st.subheader("Example Spectrum")
+                if len(new_spectra_data) > 0:
+                    spectrum_idx = st.selectbox("Select spectrum to display", range(len(new_spectra_data)), format_func=lambda x: new_filenames[x])
+                    
+                    spectrum_data, interpolated, formula, params, filename = load_and_interpolate_spectrum(
+                        uploaded_spectra[spectrum_idx].getvalue(), ref_freqs, uploaded_spectra[spectrum_idx].name
+                    )
+                    
+                    fig_example = plot_example_spectrum(
+                        spectrum_data, interpolated, ref_freqs, formula, filename
+                    )
+                    st.pyplot(fig_example)
+                
+                # Download results
+                st.subheader("Download Results")
+                
+                # Create prediction coordinates DataFrame
+                prediction_coords = []
+                for i in range(len(new_embeddings)):
+                    # Get KNN neighbors information
+                    neighbor_info = []
+                    if i < len(knn_indices) and knn_indices[i]:
+                        for idx in knn_indices[i]:
+                            neighbor_info.append({
+                                'formula': model['formulas'][idx],
+                                'logn': model['y'][idx, 0],
+                                'tex': model['y'][idx, 1],
+                                'velo': model['y'][idx, 2],
+                                'fwhm': model['y'][idx, 3],
+                                'umap_x': model['embedding'][idx, 0],
+                                'umap_y': model['embedding'][idx, 1]
+                            })
+                    
+                    prediction_coords.append({
+                        'filename': new_filenames[i],
+                        'formula': new_formulas[i],
+                        'umap_x': new_embeddings[i, 0],
+                        'umap_y': new_embeddings[i, 1],
+                        'logn': new_params[i, 0],
+                        'tex': new_params[i, 1],
+                        'velo': new_params[i, 2],
+                        'fwhm': new_params[i, 3],
+                        'knn_neighbors_count': len(neighbor_info)
+                    })
+                
+                df_coords = pd.DataFrame(prediction_coords)
+                
+                # Convert DataFrame to CSV for download
+                csv = df_coords.to_csv(index=False)
+                st.download_button(
+                    label="Download Prediction Coordinates (CSV)",
+                    data=csv,
+                    file_name="prediction_coordinates.csv",
+                    mime="text/csv"
+                )
+                
+                # Display the DataFrame
+                st.dataframe(df_coords)
+                
             else:
-                st.info("KNN analysis not available for this spectrum.")
-    
-    # Download results
-    st.subheader("Download Results")
-    
-    if 'umap_embedding_new' in results and len(results['umap_embedding_new']) > 0 and st.button("Export Results to CSV"):
-        # Create results dataframe
-        results_df = pd.DataFrame({
-            'filename': results['filenames_new'],
-            'formula': results['formulas_new'],
-            'umap_x': results['umap_embedding_new'][:, 0],
-            'umap_y': results['umap_embedding_new'][:, 1],
-            'logn': results['y_new'][:, 0],
-            'tex': results['y_new'][:, 1],
-            'velo': results['y_new'][:, 2],
-            'fwhm': results['y_new'][:, 3]
-        })
-        
-        # Convert to CSV
-        csv = results_df.to_csv(index=False)
-        st.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name="spectrum_analysis_results.csv",
-            mime="text/csv"
-        )
+                st.error("Failed to load the model. Please check the file format.")
 
 if __name__ == "__main__":
     main()
