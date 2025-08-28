@@ -65,17 +65,24 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
         # Handle different file encodings and line endings
         try:
             content = file_content.decode('utf-8')
-        except UnicodeDecodeError:
+        except (UnicodeDecodeError, AttributeError):
             try:
                 content = file_content.decode('latin-1')
             except:
-                content = file_content.decode('utf-8', errors='ignore')
+                # If it's already a string or other issue
+                if isinstance(file_content, str):
+                    content = file_content
+                else:
+                    content = file_content.decode('utf-8', errors='ignore')
         
         lines = content.splitlines()
         
+        # Skip empty files
+        if not lines:
+            raise ValueError("Empty file")
+        
         # Determinar el formato del archivo
         first_line = lines[0].strip() if lines else ""
-        second_line = lines[1].strip() if len(lines) > 1 else ""
         
         formula = "Unknown"
         param_dict = {}
@@ -137,6 +144,10 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
                 freq_clean = re.sub(r'[^\d\.\-+EeDd]', '', freq_part)
                 intensity_clean = re.sub(r'[^\d\.\-+EeDd]', '', intensity_part)
                 
+                # Skip if empty after cleaning
+                if not freq_clean or not intensity_clean:
+                    continue
+                
                 # Replace D/d with E for scientific notation
                 freq_clean = freq_clean.replace('D', 'E').replace('d', 'E')
                 intensity_clean = intensity_clean.replace('D', 'E').replace('d', 'E')
@@ -197,6 +208,54 @@ def find_knn_neighbors(training_embeddings, new_embeddings, k=5):
         all_neighbor_indices.append(valid_indices)
     
     return all_neighbor_indices
+
+def create_safe_dataframe_for_plotting(model, results):
+    """Create a safe DataFrame for plotting with proper data validation"""
+    try:
+        # Create training data
+        train_data = {
+            'umap_x': model['embedding'][:, 0].astype(float),
+            'umap_y': model['embedding'][:, 1].astype(float),
+            'formula': [str(f) for f in model['formulas']],
+            'logn': model['y'][:, 0].astype(float),
+            'tex': model['y'][:, 1].astype(float),
+            'velo': model['y'][:, 2].astype(float),
+            'fwhm': model['y'][:, 3].astype(float),
+            'type': 'Training'
+        }
+        
+        train_df = pd.DataFrame(train_data)
+        
+        # Create new data if available
+        if results and len(results['umap_embedding_new']) > 0:
+            new_data = {
+                'umap_x': results['umap_embedding_new'][:, 0].astype(float),
+                'umap_y': results['umap_embedding_new'][:, 1].astype(float),
+                'formula': [str(f) for f in results['formulas_new']],
+                'logn': results['y_new'][:, 0].astype(float),
+                'tex': results['y_new'][:, 1].astype(float),
+                'velo': results['y_new'][:, 2].astype(float),
+                'fwhm': results['y_new'][:, 3].astype(float),
+                'filename': [str(f) for f in results['filenames_new']],
+                'type': 'New'
+            }
+            
+            new_df = pd.DataFrame(new_data)
+            combined_df = pd.concat([train_df, new_df], ignore_index=True)
+        else:
+            combined_df = train_df
+            
+        # Ensure all columns are of proper type
+        for col in combined_df.columns:
+            if combined_df[col].dtype == 'object':
+                combined_df[col] = combined_df[col].astype(str)
+                
+        return combined_df
+        
+    except Exception as e:
+        st.error(f"Error creating DataFrame for plotting: {str(e)}")
+        # Return empty DataFrame as fallback
+        return pd.DataFrame()
 
 def main():
     st.title("🧪 Molecular Spectrum Analyzer")
@@ -278,52 +337,33 @@ def main():
     # UMAP Visualization
     st.subheader("UMAP Projection")
     
-    # Create combined data for plotting
-    train_df = pd.DataFrame({
-        'umap_x': model['embedding'][:, 0],
-        'umap_y': model['embedding'][:, 1],
-        'formula': model['formulas'],
-        'logn': model['y'][:, 0],
-        'tex': model['y'][:, 1],
-        'velo': model['y'][:, 2],
-        'fwhm': model['y'][:, 3],
-        'type': 'Training'
-    })
+    # Create safe DataFrame for plotting
+    combined_df = create_safe_dataframe_for_plotting(model, results)
     
-    if len(results['umap_embedding_new']) > 0:
-        new_df = pd.DataFrame({
-            'umap_x': results['umap_embedding_new'][:, 0],
-            'umap_y': results['umap_embedding_new'][:, 1],
-            'formula': results['formulas_new'],
-            'logn': results['y_new'][:, 0],
-            'tex': results['y_new'][:, 1],
-            'velo': results['y_new'][:, 2],
-            'fwhm': results['y_new'][:, 3],
-            'filename': results['filenames_new'],
-            'type': 'New'
-        })
-        
-        combined_df = pd.concat([train_df, new_df], ignore_index=True)
-    else:
-        combined_df = train_df
-        st.warning("No new spectra were successfully processed. Showing only training data.")
+    if combined_df.empty:
+        st.error("Could not create visualization data. Please check your model and data.")
+        return
     
-    # Create interactive UMAP plot
-    hover_cols = ['logn', 'tex', 'velo', 'fwhm']
-    if 'filename' in combined_df.columns:
-        hover_cols.append('filename')
-    
-    fig = px.scatter(
-        combined_df, 
-        x='umap_x', 
-        y='umap_y', 
-        color='formula',
-        symbol='type', 
-        hover_data=hover_cols,
-        title='UMAP Projection of Molecular Spectra'
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
+    # Create interactive UMAP plot with error handling
+    try:
+        fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='formula', 
+                         symbol='type', hover_data=['logn', 'tex', 'velo', 'fwhm', 'filename'],
+                         title='UMAP Projection of Molecular Spectra')
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error creating UMAP plot: {str(e)}")
+        # Fallback: show simple scatter plot
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for formula in combined_df['formula'].unique():
+            mask = combined_df['formula'] == formula
+            ax.scatter(combined_df.loc[mask, 'umap_x'], combined_df.loc[mask, 'umap_y'], 
+                      label=formula, alpha=0.6)
+        ax.set_xlabel('UMAP 1')
+        ax.set_ylabel('UMAP 2')
+        ax.set_title('UMAP Projection of Molecular Spectra')
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.grid(True, alpha=0.3)
+        st.pyplot(fig)
     
     # Parameter distribution plots
     st.subheader("Parameter Distributions")
@@ -332,30 +372,35 @@ def main():
     param_labels = ['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
     
     # Create subplots for each parameter
-    fig = make_subplots(rows=2, cols=2, subplot_titles=param_labels)
-    
-    for i, param in enumerate(param_names):
-        row = (i // 2) + 1
-        col = (i % 2) + 1
+    try:
+        fig = make_subplots(rows=2, cols=2, subplot_titles=param_labels)
         
-        # Add training data
-        fig.add_trace(
-            go.Histogram(x=train_df[param], name='Training', opacity=0.7, marker_color='blue'),
-            row=row, col=col
-        )
-        
-        # Add new data if available
-        if len(results['umap_embedding_new']) > 0:
+        for i, param in enumerate(param_names):
+            row = (i // 2) + 1
+            col = (i % 2) + 1
+            
+            # Add training data
+            train_mask = combined_df['type'] == 'Training'
             fig.add_trace(
-                go.Histogram(x=new_df[param], name='New', opacity=0.7, marker_color='red'),
+                go.Histogram(x=combined_df.loc[train_mask, param], name='Training', opacity=0.7, marker_color='blue'),
                 row=row, col=col
             )
-    
-    fig.update_layout(height=600, showlegend=False, title_text="Parameter Distributions")
-    st.plotly_chart(fig, use_container_width=True)
+            
+            # Add new data if available
+            new_mask = combined_df['type'] == 'New'
+            if new_mask.any():
+                fig.add_trace(
+                    go.Histogram(x=combined_df.loc[new_mask, param], name='New', opacity=0.7, marker_color='red'),
+                    row=row, col=col
+                )
+        
+        fig.update_layout(height=600, showlegend=False, title_text="Parameter Distributions")
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error creating parameter distribution plots: {str(e)}")
     
     # Individual spectrum analysis
-    if len(results['umap_embedding_new']) > 0:
+    if 'umap_embedding_new' in results and len(results['umap_embedding_new']) > 0:
         st.subheader("Individual Spectrum Analysis")
         
         # Select a spectrum to analyze
@@ -413,52 +458,6 @@ def main():
                         })
                     
                     st.table(pd.DataFrame(neighbor_data))
-                    
-                    # Create plot showing neighbors
-                    fig = go.Figure()
-                    
-                    # Add all training data
-                    fig.add_trace(go.Scatter(
-                        x=train_df['umap_x'], y=train_df['umap_y'],
-                        mode='markers',
-                        marker=dict(color='lightgray', size=5),
-                        name='Training Data',
-                        hoverinfo='skip'
-                    ))
-                    
-                    # Add neighbors
-                    neighbor_x = [model['embedding'][idx, 0] for idx in neighbor_indices]
-                    neighbor_y = [model['embedding'][idx, 1] for idx in neighbor_indices]
-                    neighbor_formulas = [model['formulas'][idx] for idx in neighbor_indices]
-                    
-                    fig.add_trace(go.Scatter(
-                        x=neighbor_x, y=neighbor_y,
-                        mode='markers',
-                        marker=dict(color='blue', size=10),
-                        name='Neighbors',
-                        text=neighbor_formulas,
-                        hoverinfo='text'
-                    ))
-                    
-                    # Add selected spectrum
-                    fig.add_trace(go.Scatter(
-                        x=[results['umap_embedding_new'][selected_idx, 0]],
-                        y=[results['umap_embedding_new'][selected_idx, 1]],
-                        mode='markers',
-                        marker=dict(color='red', size=15, symbol='star'),
-                        name='Selected Spectrum',
-                        text=[results['formulas_new'][selected_idx]],
-                        hoverinfo='text'
-                    ))
-                    
-                    fig.update_layout(
-                        title="K-Nearest Neighbors in UMAP Space",
-                        xaxis_title="UMAP 1",
-                        yaxis_title="UMAP 2",
-                        showlegend=True
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("No neighbors found for this spectrum.")
             else:
@@ -467,7 +466,7 @@ def main():
     # Download results
     st.subheader("Download Results")
     
-    if len(results['umap_embedding_new']) > 0 and st.button("Export Results to CSV"):
+    if 'umap_embedding_new' in results and len(results['umap_embedding_new']) > 0 and st.button("Export Results to CSV"):
         # Create results dataframe
         results_df = pd.DataFrame({
             'filename': results['filenames_new'],
@@ -508,7 +507,8 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
     ref_freqs = model['reference_frequencies']
     
     # Process each spectrum
-    for spectrum_file in tqdm(spectra_files, desc="Processing spectra"):
+    successful_files = 0
+    for spectrum_file in spectra_files:
         try:
             # Read file content once
             file_content = spectrum_file.getvalue()
@@ -528,9 +528,13 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
             results['umap_embedding_new'].append(X_umap[0])
             results['pca_components_new'].append(X_pca[0])
             
+            successful_files += 1
+            
         except Exception as e:
             st.warning(f"Error processing {spectrum_file.name}: {str(e)}")
             continue
+    
+    st.info(f"Successfully processed {successful_files} out of {len(spectra_files)} spectrum files.")
     
     # Convert to arrays
     if results['umap_embedding_new']:
@@ -551,4 +555,3 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
-
