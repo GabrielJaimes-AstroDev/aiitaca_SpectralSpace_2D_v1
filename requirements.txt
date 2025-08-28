@@ -5,7 +5,7 @@ streamlit>=1.36.0
 numpy==1.26.4
 pandas==2.3.1
 scipy==1.13.1
-scikit-learn==1.6.1.
+scikit-learn==1.6.1
 matplotlib==3.10.5
 seaborn==0.13.2
 tqdm>=4.65
@@ -18,5 +18,6 @@ llvmlite==0.44.0
 pynndescent==0.5.13
 
 mol2vec==0.2.2
+
 
 
