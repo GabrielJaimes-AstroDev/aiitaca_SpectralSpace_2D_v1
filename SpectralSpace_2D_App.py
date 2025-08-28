@@ -215,7 +215,7 @@ def create_safe_dataframe_for_plotting(model, results):
         # Create training data
         train_data = {
             'umap_x': model['embedding'][:, 0].astype(float),
-            'umap_y': model['embedding'][:, 1].astype(float),
+            'umap_y': model['embedding'][:, 1].ast(float),
             'formula': [str(f) for f in model['formulas']],
             'logn': model['y'][:, 0].astype(float),
             'tex': model['y'][:, 1].astype(float),
@@ -223,6 +223,10 @@ def create_safe_dataframe_for_plotting(model, results):
             'fwhm': model['y'][:, 3].astype(float),
             'type': 'Training'
         }
+        
+        # Add filename to training data if available
+        if 'filenames' in model and len(model['filenames']) == len(model['formulas']):
+            train_data['filename'] = [str(f) for f in model['filenames']]
         
         train_df = pd.DataFrame(train_data)
         
@@ -346,8 +350,13 @@ def main():
     
     # Create interactive UMAP plot with error handling
     try:
+        # Check if filename column exists for hover data
+        hover_data = ['logn', 'tex', 'velo', 'fwhm']
+        if 'filename' in combined_df.columns:
+            hover_data.append('filename')
+            
         fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='formula', 
-                         symbol='type', hover_data=['logn', 'tex', 'velo', 'fwhm', 'filename'],
+                         symbol='type', hover_data=hover_data,
                          title='UMAP Projection of Molecular Spectra')
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
