@@ -61,100 +61,122 @@ def extract_molecule_formula(header):
 
 def load_and_interpolate_spectrum(file_content, filename, reference_frequencies):
     """Carga un espectro desde contenido de archivo y lo interpola a las frecuencias de referencia"""
-    lines = file_content.decode('utf-8').splitlines()
-    
-    # Determinar el formato del archivo
-    first_line = lines[0].strip()
-    second_line = lines[1].strip() if len(lines) > 1 else ""
-    
-    formula = "Unknown"
-    param_dict = {}
-    data_start_line = 0
-    
-    # Formato 1: con header de molécula y parámetros
-    if first_line.startswith('//') and 'molecules=' in first_line:
-        header = first_line[2:].strip()  # Remove the '//'
-        formula = extract_molecule_formula(header)
-        
-        # Extraer parámetros del header
-        for part in header.split():
-            if '=' in part:
-                try:
-                    key, value = part.split('=')
-                    key = key.strip()
-                    value = value.strip("'")
-                    if key in ['molecules', 'sourcesize']:
-                        continue
-                    try:
-                        param_dict[key] = float(value)
-                    except ValueError:
-                        param_dict[key] = value
-                except:
-                    continue
-        data_start_line = 1
-    
-    # Formato 2: con header de columnas
-    elif first_line.startswith('!') or first_line.startswith('#'):
-        # Intentar extraer información del header si está disponible
-        if 'molecules=' in first_line:
-            formula = extract_molecule_formula(first_line)
-        data_start_line = 1
-    
-    # Formato 3: sin header, solo datos
-    else:
-        data_start_line = 0
-        formula = filename.split('.')[0]  # Usar nombre del archivo como fórmula
-
-    spectrum_data = []
-    for line in lines[data_start_line:]:
-        line = line.strip()
-        # Saltar líneas de comentario o vacías
-        if not line or line.startswith('!') or line.startswith('#'):
-            continue
-            
+    try:
+        # Handle different file encodings and line endings
         try:
-            parts = line.split()
-            if len(parts) >= 2:
-                # Intentar diferentes formatos de números
-                try:
-                    freq = float(parts[0])
-                    intensity = float(parts[1])
-                except ValueError:
-                    # Intentar con notación científica que pueda tener D instead of E
-                    freq_str = parts[0].replace('D', 'E').replace('d', 'E')
-                    intensity_str = parts[1].replace('D', 'E').replace('d', 'E')
-                    freq = float(freq_str)
-                    intensity = float(intensity_str)
+            content = file_content.decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                content = file_content.decode('latin-1')
+            except:
+                content = file_content.decode('utf-8', errors='ignore')
+        
+        lines = content.splitlines()
+        
+        # Determinar el formato del archivo
+        first_line = lines[0].strip() if lines else ""
+        second_line = lines[1].strip() if len(lines) > 1 else ""
+        
+        formula = "Unknown"
+        param_dict = {}
+        data_start_line = 0
+        
+        # Formato 1: con header de molécula y parámetros
+        if first_line.startswith('//') and 'molecules=' in first_line:
+            header = first_line[2:].strip()  # Remove the '//'
+            formula = extract_molecule_formula(header)
+            
+            # Extraer parámetros del header
+            for part in header.split():
+                if '=' in part:
+                    try:
+                        key, value = part.split('=')
+                        key = key.strip()
+                        value = value.strip("'")
+                        if key in ['molecules', 'sourcesize']:
+                            continue
+                        try:
+                            param_dict[key] = float(value)
+                        except ValueError:
+                            param_dict[key] = value
+                    except:
+                        continue
+            data_start_line = 1
+        
+        # Formato 2: con header de columnas
+        elif first_line.startswith('!') or first_line.startswith('#'):
+            # Intentar extraer información del header si está disponible
+            if 'molecules=' in first_line:
+                formula = extract_molecule_formula(first_line)
+            data_start_line = 1
+        
+        # Formato 3: sin header, solo datos
+        else:
+            data_start_line = 0
+            formula = filename.split('.')[0]  # Usar nombre del archivo como fórmula
+
+        spectrum_data = []
+        line_number = data_start_line
+        for line in lines[data_start_line:]:
+            line_number += 1
+            line = line.strip()
+            # Saltar líneas de comentario o vacías
+            if not line or line.startswith('!') or line.startswith('#') or line.startswith('//'):
+                continue
+                
+            try:
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                
+                # Clean parts from any non-numeric characters except for scientific notation
+                freq_part = parts[0].strip()
+                intensity_part = parts[1].strip()
+                
+                # Remove any non-numeric characters except for ., -, +, E, e, D, d
+                freq_clean = re.sub(r'[^\d\.\-+EeDd]', '', freq_part)
+                intensity_clean = re.sub(r'[^\d\.\-+EeDd]', '', intensity_part)
+                
+                # Replace D/d with E for scientific notation
+                freq_clean = freq_clean.replace('D', 'E').replace('d', 'E')
+                intensity_clean = intensity_clean.replace('D', 'E').replace('d', 'E')
+                
+                freq = float(freq_clean)
+                intensity = float(intensity_clean)
                 
                 if np.isfinite(freq) and np.isfinite(intensity):
                     spectrum_data.append([freq, intensity])
-        except Exception as e:
-            st.warning(f"Could not parse line '{line}': {e}")
-            continue
+            except Exception as e:
+                st.warning(f"Could not parse line {line_number} '{line}' in {filename}: {str(e)}")
+                continue
 
-    if not spectrum_data:
-        raise ValueError("No valid data points found in spectrum file")
+        if not spectrum_data:
+            raise ValueError("No valid data points found in spectrum file")
 
-    spectrum_data = np.array(spectrum_data)
+        spectrum_data = np.array(spectrum_data)
 
-    # Ajustar frecuencia si está en GHz (convertir a Hz)
-    if np.max(spectrum_data[:, 0]) < 1e11:  # Si las frecuencias son menores a 100 GHz, probablemente están en GHz
-        spectrum_data[:, 0] = spectrum_data[:, 0] * 1e9  # Convertir GHz to Hz
-        st.info(f"Converted frequencies from GHz to Hz for {filename}")
+        # Ajustar frecuencia si está en GHz (convertir a Hz)
+        if np.max(spectrum_data[:, 0]) < 1e11:  # Si las frecuencias son menores a 100 GHz, probablemente están en GHz
+            spectrum_data[:, 0] = spectrum_data[:, 0] * 1e9  # Convertir GHz to Hz
+            st.info(f"Converted frequencies from GHz to Hz for {filename}")
 
-    interpolator = interp1d(spectrum_data[:, 0], spectrum_data[:, 1],
-                            kind='linear', bounds_error=False, fill_value=0.0)
-    interpolated = interpolator(reference_frequencies)
+        interpolator = interp1d(spectrum_data[:, 0], spectrum_data[:, 1],
+                                kind='linear', bounds_error=False, fill_value=0.0)
+        interpolated = interpolator(reference_frequencies)
 
-    # Extraer parámetros con valores por defecto si faltan
-    params = [
-        param_dict.get('logn', np.nan),
-        param_dict.get('tex', np.nan),
-        param_dict.get('velo', np.nan),
-        param_dict.get('fwhm', np.nan)
-    ]
+        # Extraer parámetros con valores por defecto si faltan
+        params = [
+            param_dict.get('logn', np.nan),
+            param_dict.get('tex', np.nan),
+            param_dict.get('velo', np.nan),
+            param_dict.get('fwhm', np.nan)
+        ]
 
-    return spectrum_data, interpolated, formula, params, filename
+        return spectrum_data, interpolated, formula, params, filename
+        
+    except Exception as e:
+        st.error(f"Error processing {filename}: {str(e)}")
+        raise
 
 def find_knn_neighbors(training_embeddings, new_embeddings, k=5):
     """Encuentra los k vecinos más cercanos usando KNN"""
@@ -284,22 +306,12 @@ def main():
         combined_df = pd.concat([train_df, new_df], ignore_index=True)
     else:
         combined_df = train_df
+        st.warning("No new spectra were successfully processed. Showing only training data.")
     
     # Create interactive UMAP plot
-    hover_cols = ['logn', 'tex', 'velo', 'fwhm']
-    if 'filename' in combined_df.columns:
-        hover_cols.append('filename')
-    
-    fig = px.scatter(
-        combined_df, 
-        x='umap_x', 
-        y='umap_y', 
-        color='formula',
-        symbol='type', 
-        hover_data=hover_cols,
-        title='UMAP Projection of Molecular Spectra'
-    )
-
+    fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='formula', 
+                     symbol='type', hover_data=['logn', 'tex', 'velo', 'fwhm', 'filename'],
+                     title='UMAP Projection of Molecular Spectra')
     st.plotly_chart(fig, use_container_width=True)
     
     # Parameter distribution plots
@@ -444,30 +456,27 @@ def main():
     # Download results
     st.subheader("Download Results")
     
-    if st.button("Export Results to CSV"):
+    if len(results['umap_embedding_new']) > 0 and st.button("Export Results to CSV"):
         # Create results dataframe
-        if len(results['umap_embedding_new']) > 0:
-            results_df = pd.DataFrame({
-                'filename': results['filenames_new'],
-                'formula': results['formulas_new'],
-                'umap_x': results['umap_embedding_new'][:, 0],
-                'umap_y': results['umap_embedding_new'][:, 1],
-                'logn': results['y_new'][:, 0],
-                'tex': results['y_new'][:, 1],
-                'velo': results['y_new'][:, 2],
-                'fwhm': results['y_new'][:, 3]
-            })
-            
-            # Convert to CSV
-            csv = results_df.to_csv(index=False)
-            st.download_button(
-                label="Download CSV",
-                data=csv,
-                file_name="spectrum_analysis_results.csv",
-                mime="text/csv"
-            )
-        else:
-            st.warning("No results to export.")
+        results_df = pd.DataFrame({
+            'filename': results['filenames_new'],
+            'formula': results['formulas_new'],
+            'umap_x': results['umap_embedding_new'][:, 0],
+            'umap_y': results['umap_embedding_new'][:, 1],
+            'logn': results['y_new'][:, 0],
+            'tex': results['y_new'][:, 1],
+            'velo': results['y_new'][:, 2],
+            'fwhm': results['y_new'][:, 3]
+        })
+        
+        # Convert to CSV
+        csv = results_df.to_csv(index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name="spectrum_analysis_results.csv",
+            mime="text/csv"
+        )
 
 def analyze_spectra(model, spectra_files, knn_neighbors=5):
     """Analyze uploaded spectra using the trained model"""
@@ -490,8 +499,10 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
     # Process each spectrum
     for spectrum_file in tqdm(spectra_files, desc="Processing spectra"):
         try:
+            # Read file content once
+            file_content = spectrum_file.getvalue()
             spectrum_data, interpolated, formula, params, filename = load_and_interpolate_spectrum(
-                spectrum_file.getvalue(), spectrum_file.name, ref_freqs
+                file_content, spectrum_file.name, ref_freqs
             )
             
             # Transform the spectrum
@@ -510,24 +521,22 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
             st.warning(f"Error processing {spectrum_file.name}: {str(e)}")
             continue
     
-    if not results['umap_embedding_new']:
-        st.error("No valid spectra could be processed.")
-        return results
-    
     # Convert to arrays
-    results['X_new'] = np.array(results['X_new'])
-    results['y_new'] = np.array(results['y_new'])
-    results['formulas_new'] = np.array(results['formulas_new'])
-    results['umap_embedding_new'] = np.array(results['umap_embedding_new'])
-    results['pca_components_new'] = np.array(results['pca_components_new'])
-    
-    # Find KNN neighbors
-    results['knn_neighbors'] = find_knn_neighbors(
-        model['embedding'], results['umap_embedding_new'], k=knn_neighbors
-    )
+    if results['umap_embedding_new']:
+        results['X_new'] = np.array(results['X_new'])
+        results['y_new'] = np.array(results['y_new'])
+        results['formulas_new'] = np.array(results['formulas_new'])
+        results['umap_embedding_new'] = np.array(results['umap_embedding_new'])
+        results['pca_components_new'] = np.array(results['pca_components_new'])
+        
+        # Find KNN neighbors
+        results['knn_neighbors'] = find_knn_neighbors(
+            model['embedding'], results['umap_embedding_new'], k=knn_neighbors
+        )
+    else:
+        st.error("No valid spectra could be processed. Please check your spectrum files.")
     
     return results
 
 if __name__ == "__main__":
     main()
-
