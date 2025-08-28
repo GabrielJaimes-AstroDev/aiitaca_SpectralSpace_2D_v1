@@ -215,7 +215,7 @@ def create_safe_dataframe_for_plotting(model, results):
         # Create training data
         train_data = {
             'umap_x': model['embedding'][:, 0].astype(float),
-            'umap_y': model['embedding'][:, 1].ast(float),
+            'umap_y': model['embedding'][:, 1].astype(float),
             'formula': [str(f) for f in model['formulas']],
             'logn': model['y'][:, 0].astype(float),
             'tex': model['y'][:, 1].astype(float),
@@ -231,7 +231,7 @@ def create_safe_dataframe_for_plotting(model, results):
         train_df = pd.DataFrame(train_data)
         
         # Create new data if available
-        if results and len(results['umap_embedding_new']) > 0:
+        if results and 'umap_embedding_new' in results and len(results['umap_embedding_new']) > 0:
             new_data = {
                 'umap_x': results['umap_embedding_new'][:, 0].astype(float),
                 'umap_y': results['umap_embedding_new'][:, 1].astype(float),
@@ -323,7 +323,7 @@ def main():
     with st.expander("Model Information", expanded=True):
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Training Samples", model.get('sample_size', 'N/A'))
+            st.metric("Training Samples", len(model['formulas']))
         with col2:
             st.metric("PCA Components", model.get('n_components', 'N/A'))
         with col3:
