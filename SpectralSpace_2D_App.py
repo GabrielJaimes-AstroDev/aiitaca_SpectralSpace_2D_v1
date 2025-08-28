@@ -309,9 +309,20 @@ def main():
         st.warning("No new spectra were successfully processed. Showing only training data.")
     
     # Create interactive UMAP plot
-    fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='formula', 
-                     symbol='type', hover_data=['logn', 'tex', 'velo', 'fwhm', 'filename'],
-                     title='UMAP Projection of Molecular Spectra')
+    hover_cols = ['logn', 'tex', 'velo', 'fwhm']
+    if 'filename' in combined_df.columns:
+        hover_cols.append('filename')
+    
+    fig = px.scatter(
+        combined_df, 
+        x='umap_x', 
+        y='umap_y', 
+        color='formula',
+        symbol='type', 
+        hover_data=hover_cols,
+        title='UMAP Projection of Molecular Spectra'
+    )
+
     st.plotly_chart(fig, use_container_width=True)
     
     # Parameter distribution plots
@@ -540,3 +551,4 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
