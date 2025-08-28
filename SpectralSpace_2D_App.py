@@ -106,7 +106,7 @@ def load_and_interpolate_spectrum(file_content, reference_frequencies, filename)
     else:
         data_start_line = 0
         formula = filename.split('.')[0]  # Usar nombre del archivo como fórmula
-
+    
     spectrum_data = []
     for line in lines[data_start_line:]:
         line = line.strip()
@@ -138,15 +138,44 @@ def load_and_interpolate_spectrum(file_content, reference_frequencies, filename)
         raise ValueError("No valid data points found in spectrum file")
 
     spectrum_data = np.array(spectrum_data)
+    
+    # Verificar que tenemos suficientes puntos para interpolación
+    if len(spectrum_data) < 2:
+        raise ValueError(f"Not enough data points for interpolation in {filename} (found {len(spectrum_data)})")
 
     # Ajustar frecuencia si está en GHz (convertir a Hz)
     if np.max(spectrum_data[:, 0]) < 1e11:  # Si las frecuencias son menores a 100 GHz, probablemente están en GHz
         spectrum_data[:, 0] = spectrum_data[:, 0] * 1e9  # Convertir GHz to Hz
         st.info(f"Converted frequencies from GHz to Hz for {filename}")
 
-    interpolator = interp1d(spectrum_data[:, 0], spectrum_data[:, 1],
-                            kind='linear', bounds_error=False, fill_value=0.0)
-    interpolated = interpolator(reference_frequencies)
+    # SOLUCIÓN AL ERROR 78: Ordenar y limpiar datos antes de interpolación
+    # Ordenar por frecuencia
+    sorted_indices = np.argsort(spectrum_data[:, 0])
+    spectrum_data = spectrum_data[sorted_indices]
+    
+    # Remover frecuencias duplicadas (mantener la primera ocurrencia)
+    unique_freqs, unique_indices = np.unique(spectrum_data[:, 0], return_index=True)
+    if len(unique_indices) < len(spectrum_data):
+        spectrum_data = spectrum_data[unique_indices]
+        st.warning(f"Removed {len(spectrum_data) - len(unique_indices)} duplicate frequencies in {filename}")
+    
+    # Verificar que aún tenemos suficientes puntos únicos
+    if len(spectrum_data) < 2:
+        raise ValueError(f"Not enough unique data points for interpolation in {filename} after removing duplicates")
+    
+    try:
+        # Ahora sí podemos crear el interpolador sin errores
+        interpolator = interp1d(spectrum_data[:, 0], spectrum_data[:, 1],
+                                kind='linear', bounds_error=False, fill_value=0.0)
+        interpolated = interpolator(reference_frequencies)
+        
+        # Verificar que la interpolación produjo resultados válidos
+        if not np.all(np.isfinite(interpolated)):
+            st.warning(f"Some interpolated values are not finite for {filename}")
+            interpolated = np.nan_to_num(interpolated, nan=0.0, posinf=0.0, neginf=0.0)
+            
+    except Exception as e:
+        raise ValueError(f"Interpolation failed for {filename}: {str(e)}")
 
     # Extraer parámetros con valores por defecto si faltan
     params = [
@@ -580,3 +609,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
