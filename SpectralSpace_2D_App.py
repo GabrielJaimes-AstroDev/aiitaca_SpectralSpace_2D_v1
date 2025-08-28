@@ -62,8 +62,19 @@ def extract_molecule_formula(header):
 def load_and_interpolate_spectrum(file_content, filename, reference_frequencies):
     """Carga un espectro desde contenido de archivo y lo interpola a las frecuencias de referencia"""
     try:
-        # Convertir el contenido a líneas (manejar diferentes tipos de entrada)
-        if isinstance(file_content, bytes):
+        # DEBUG: Mostrar información del archivo
+        st.write(f"Processing file: {filename}")
+        
+        # Convertir el contenido a string adecuadamente
+        if hasattr(file_content, 'read'):
+            # Si es un objeto file-like, leer el contenido
+            content = file_content.read()
+            if isinstance(content, bytes):
+                try:
+                    content = content.decode('utf-8')
+                except UnicodeDecodeError:
+                    content = content.decode('latin-1')
+        elif isinstance(file_content, bytes):
             # Si es bytes, decodificar
             try:
                 content = file_content.decode('utf-8')
@@ -71,13 +82,17 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
                 content = file_content.decode('latin-1')
         else:
             # Si ya es string
-            content = file_content
-            
-        lines = content.splitlines()
+            content = str(file_content)
         
-        # Resto del código igual que en tu script original...
+        lines = content.splitlines()
+        st.write(f"Number of lines: {len(lines)}")
+        
+        if not lines:
+            raise ValueError("Empty file")
+        
+        # Determinar el formato del archivo
         first_line = lines[0].strip() if lines else ""
-        second_line = lines[1].strip() if len(lines) > 1 else ""
+        st.write(f"First line: '{first_line}'")
         
         formula = "Unknown"
         param_dict = {}
@@ -85,8 +100,9 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
         
         # Formato 1: con header de molécula y parámetros
         if first_line.startswith('//') and 'molecules=' in first_line:
-            header = first_line[2:].strip()  # Remove the '//'
+            header = first_line[2:].strip()
             formula = extract_molecule_formula(header)
+            st.write(f"Format 1 detected. Formula: {formula}")
             
             # Extraer parámetros del header
             for part in header.split():
@@ -107,58 +123,77 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
         
         # Formato 2: con header de columnas
         elif first_line.startswith('!') or first_line.startswith('#'):
-            # Intentar extraer información del header si está disponible
+            st.write("Format 2 detected")
             if 'molecules=' in first_line:
                 formula = extract_molecule_formula(first_line)
             data_start_line = 1
         
         # Formato 3: sin header, solo datos
         else:
+            st.write("Format 3 detected - no header")
             data_start_line = 0
-            formula = filename.split('.')[0]  # Usar nombre del archivo como fórmula
+            formula = os.path.splitext(filename)[0]  # Usar nombre del archivo como fórmula
 
         spectrum_data = []
+        line_number = data_start_line
+        
+        st.write(f"Starting data at line: {data_start_line}")
+        
         for line in lines[data_start_line:]:
+            line_number += 1
             line = line.strip()
+            
             # Saltar líneas de comentario o vacías
             if not line or line.startswith('!') or line.startswith('#') or line.startswith('//'):
                 continue
                 
             try:
                 parts = line.split()
-                if len(parts) >= 2:
-                    # Intentar diferentes formatos de números
-                    try:
-                        freq = float(parts[0])
-                        intensity = float(parts[1])
-                    except ValueError:
-                        # Intentar con notación científica que pueda tener D instead of E
-                        freq_str = parts[0].replace('D', 'E').replace('d', 'E')
-                        intensity_str = parts[1].replace('D', 'E').replace('d', 'E')
-                        freq = float(freq_str)
-                        intensity = float(intensity_str)
+                if len(parts) < 2:
+                    continue
+                
+                # Limpiar y procesar los valores
+                freq_part = parts[0].strip()
+                intensity_part = parts[1].strip()
+                
+                # Reemplazar D/d con E para notación científica
+                freq_clean = freq_part.replace('D', 'E').replace('d', 'E')
+                intensity_clean = intensity_part.replace('D', 'E').replace('d', 'E')
+                
+                # Remover caracteres no numéricos (excepto . - + E e)
+                freq_clean = re.sub(r'[^\d\.\-+Ee]', '', freq_clean)
+                intensity_clean = re.sub(r'[^\d\.\-+Ee]', '', intensity_clean)
+                
+                if not freq_clean or not intensity_clean:
+                    continue
+                
+                freq = float(freq_clean)
+                intensity = float(intensity_clean)
+                
+                if np.isfinite(freq) and np.isfinite(intensity):
+                    spectrum_data.append([freq, intensity])
                     
-                    if np.isfinite(freq) and np.isfinite(intensity):
-                        spectrum_data.append([freq, intensity])
             except Exception as e:
-                st.warning(f"Warning: Could not parse line '{line}' in {filename}: {e}")
+                st.warning(f"Could not parse line {line_number}: '{line}' - {str(e)}")
                 continue
 
         if not spectrum_data:
             raise ValueError("No valid data points found in spectrum file")
 
         spectrum_data = np.array(spectrum_data)
+        st.write(f"Found {len(spectrum_data)} data points")
 
         # Ajustar frecuencia si está en GHz (convertir a Hz)
-        if np.max(spectrum_data[:, 0]) < 1e11:  # Si las frecuencias son menores a 100 GHz, probablemente están en GHz
-            spectrum_data[:, 0] = spectrum_data[:, 0] * 1e9  # Convertir GHz to Hz
+        if np.max(spectrum_data[:, 0]) < 1e11:
+            spectrum_data[:, 0] = spectrum_data[:, 0] * 1e9
             st.info(f"Converted frequencies from GHz to Hz for {filename}")
 
+        # Interpolar
         interpolator = interp1d(spectrum_data[:, 0], spectrum_data[:, 1],
                                 kind='linear', bounds_error=False, fill_value=0.0)
         interpolated = interpolator(reference_frequencies)
 
-        # Extraer parámetros con valores por defecto si faltan
+        # Extraer parámetros
         params = [
             param_dict.get('logn', np.nan),
             param_dict.get('tex', np.nan),
@@ -166,13 +201,15 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
             param_dict.get('fwhm', np.nan)
         ]
         
-        # Sanitize filename
         safe_filename = sanitize_filename(os.path.basename(filename))[:60]
         
+        st.success(f"Successfully processed {filename}")
         return spectrum_data, interpolated, formula, params, safe_filename
 
     except Exception as e:
         st.error(f"Error processing {filename}: {str(e)}")
+        import traceback
+        st.error(f"Traceback: {traceback.format_exc()}")
         raise
 
 def find_knn_neighbors(training_embeddings, new_embeddings, k=5):
@@ -505,15 +542,20 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
     successful_files = 0
     for spectrum_file in spectra_files:
         try:
-            # OBTENER EL CONTENIDO COMPLETO DEL ARCHIVO
-            file_content = spectrum_file.getvalue()
+            st.write(f"Processing: {spectrum_file.name}")
+            
+            # IMPORTANTE: Resetear el puntero del archivo si es necesario
+            if hasattr(spectrum_file, 'seek') and hasattr(spectrum_file, 'read'):
+                spectrum_file.seek(0)
+                file_content = spectrum_file.read()
+            else:
+                file_content = spectrum_file.getvalue()
             
             spectrum_data, interpolated, formula, params, filename = load_and_interpolate_spectrum(
                 file_content, spectrum_file.name, ref_freqs
             )
-
             
-            # Transform the spectrum
+            # Transformar el espectro
             X_scaled = scaler.transform([interpolated])
             X_pca = pca.transform(X_scaled)
             X_umap = umap_model.transform(X_pca)
@@ -528,7 +570,9 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
             successful_files += 1
             
         except Exception as e:
-            st.warning(f"Error processing {spectrum_file.name}: {str(e)}")
+            st.error(f"Error processing {spectrum_file.name}: {str(e)}")
+            import traceback
+            st.error(f"Detailed error: {traceback.format_exc()}")
             continue
     
     st.info(f"Successfully processed {successful_files} out of {len(spectra_files)} spectrum files.")
@@ -552,6 +596,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
