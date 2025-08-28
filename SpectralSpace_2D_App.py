@@ -544,12 +544,10 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
         try:
             st.write(f"Processing: {spectrum_file.name}")
             
-            # IMPORTANTE: Resetear el puntero del archivo si es necesario
-            if hasattr(spectrum_file, 'seek') and hasattr(spectrum_file, 'read'):
+            # Reset file pointer and read content
+            if hasattr(spectrum_file, 'seek'):
                 spectrum_file.seek(0)
-                file_content = spectrum_file.read()
-            else:
-                file_content = spectrum_file.getvalue()
+            file_content = spectrum_file.read()
             
             spectrum_data, interpolated, formula, params, filename = load_and_interpolate_spectrum(
                 file_content, spectrum_file.name, ref_freqs
@@ -558,7 +556,25 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
             # Transformar el espectro
             X_scaled = scaler.transform([interpolated])
             X_pca = pca.transform(X_scaled)
-            X_umap = umap_model.transform(X_pca)
+            
+            # SOLUCIÓN: Manejar la transformación UMAP con try-catch
+            try:
+                X_umap = umap_model.transform(X_pca)
+            except Exception as umap_error:
+                st.warning(f"UMAP transformation failed for {filename}: {umap_error}")
+                st.warning("Using alternative embedding method...")
+                
+                # Método alternativo: usar PCA components directamente
+                # O usar una proyección simple basada en distancias
+                X_umap = X_pca[:, :2]  # Usar las primeras 2 componentes PCA
+                
+                # Si necesitas escalar para que coincida con el espacio UMAP original
+                # puedes ajustar la escala basándote en el training data
+                if hasattr(model, 'embedding'):
+                    train_embedding = model['embedding']
+                    # Escalar para que esté en un rango similar
+                    X_umap = (X_umap - X_umap.mean(axis=0)) / X_umap.std(axis=0)
+                    X_umap = X_umap * train_embedding.std(axis=0) + train_embedding.mean(axis=0)
             
             results['X_new'].append(interpolated)
             results['formulas_new'].append(formula)
@@ -596,6 +612,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
