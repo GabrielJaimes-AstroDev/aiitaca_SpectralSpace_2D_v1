@@ -558,23 +558,38 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
             X_pca = pca.transform(X_scaled)
             
             # SOLUCIÓN: Manejar la transformación UMAP con try-catch
-            try:
-                X_umap = umap_model.transform(X_pca)
-            except Exception as umap_error:
-                st.warning(f"UMAP transformation failed for {filename}: {umap_error}")
-                st.warning("Using alternative embedding method...")
+            # Reemplaza esta sección en tu función analyze_spectra:
+        try:
+            X_umap = umap_model.transform(X_pca)
+        except Exception as umap_error:
+            st.warning(f"UMAP transformation failed for {filename}: {umap_error}")
+            st.warning("Using alternative embedding method based on PCA...")
+            
+            # Método alternativo MEJORADO: Proyectar en el espacio de training
+            if 'embedding' in model and 'pca_components' in model:
+                # Calcular distancias a los centroides de training en espacio PCA
+                from sklearn.metrics import pairwise_distances
                 
-                # Método alternativo: usar PCA components directamente
-                # O usar una proyección simple basada en distancias
-                X_umap = X_pca[:, :2]  # Usar las primeras 2 componentes PCA
+                # Usar las mismas dimensiones que el embedding UMAP original
+                n_components = min(2, X_pca.shape[1])
                 
-                # Si necesitas escalar para que coincida con el espacio UMAP original
-                # puedes ajustar la escala basándote en el training data
-                if hasattr(model, 'embedding'):
-                    train_embedding = model['embedding']
-                    # Escalar para que esté en un rango similar
-                    X_umap = (X_umap - X_umap.mean(axis=0)) / X_umap.std(axis=0)
-                    X_umap = X_umap * train_embedding.std(axis=0) + train_embedding.mean(axis=0)
+                # Reducir a 2D usando las primeras componentes PCA
+                # pero escaladas para coincidir con el rango del UMAP training
+                train_embedding = model['embedding']
+                train_pca = model.get('pca_components', X_pca)
+                
+                # Escalar la nueva muestra al mismo rango que el training PCA
+                pca_scaled = (X_pca - train_pca.mean(axis=0)) / (train_pca.std(axis=0) + 1e-8)
+                
+                # Reducir dimensionalidad si es necesario
+                if pca_scaled.shape[1] > 2:
+                    pca_scaled = pca_scaled[:, :2]
+                
+                # Escalar al rango del embedding UMAP
+                X_umap = (pca_scaled * train_embedding.std(axis=0)) + train_embedding.mean(axis=0)
+            else:
+                # Fallback simple: usar primeras 2 componentes PCA
+                X_umap = X_pca[:, :2]
             
             results['X_new'].append(interpolated)
             results['formulas_new'].append(formula)
@@ -612,6 +627,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
