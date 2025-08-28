@@ -348,7 +348,40 @@ def process_spectra(model, uploaded_files, knn_neighbors=5):
                 # Transformar el espectro
                 X_scaled = scaler.transform([interpolated])
                 X_pca = pca.transform(X_scaled)
-                X_umap = umap_model.transform(X_pca)
+                
+                # SOLUCIÓN: Manejar el error de UMAP de forma más robusta
+                try:
+                    X_umap = umap_model.transform(X_pca)
+                except Exception as e:
+                    st.warning(f"UMAP transformation failed for {filename}: {e}")
+                    st.warning("Using alternative approach: fitting new UMAP on PCA components")
+                    
+                    # Alternativa: Crear un nuevo UMAP con los mismos parámetros
+                    try:
+                        # Crear UMAP con mismos parámetros pero forzando reproducible
+                        alt_umap = UMAP(
+                            n_components=umap_model.n_components,
+                            n_neighbors=umap_model.n_neighbors,
+                            min_dist=umap_model.min_dist,
+                            metric=umap_model.metric,
+                            random_state=42,  # Forzar random state para reproducibilidad
+                            low_memory=True   # Modo de baja memoria
+                        )
+                        
+                        # Ajustar con datos de entrenamiento y transformar
+                        if 'X_pca_train' not in model:
+                            # Si no tenemos los datos PCA de entrenamiento, no podemos hacer esto
+                            raise ValueError("No training PCA data available for alternative UMAP")
+                        
+                        # Ajustar con datos de entrenamiento y transformar
+                        alt_umap.fit(model['X_pca_train'])
+                        X_umap = alt_umap.transform(X_pca)
+                        
+                    except Exception as alt_e:
+                        st.error(f"Alternative UMAP also failed: {alt_e}")
+                        # Último recurso: usar los componentes PCA directamente
+                        X_umap = X_pca[:, :2]  # Tomar solo las primeras 2 componentes
+                        st.info("Using first 2 PCA components as fallback")
                 
                 new_spectra_data.append(interpolated)
                 new_formulas.append(formula)
@@ -390,7 +423,6 @@ def process_spectra(model, uploaded_files, knn_neighbors=5):
     status_text.empty()
     
     return results
-
 def create_visualizations(results):
     """Crea visualizaciones interactivas de los resultados"""
     if not results:
@@ -826,4 +858,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
