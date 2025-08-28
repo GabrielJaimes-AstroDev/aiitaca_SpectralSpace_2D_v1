@@ -383,6 +383,17 @@ def process_spectra(model, uploaded_files, knn_neighbors=5):
                         X_umap = X_pca[:, :2]  # Tomar solo las primeras 2 componentes
                         st.info("Using first 2 PCA components as fallback")
                 
+                # TRANSFORMACIÓN SEGURA UMAP
+                if 'X_pca_train' in model:
+                    X_umap = safe_umap_transform(
+                        umap_model,
+                        model['X_pca_train'],
+                        X_pca
+                    )
+                else:
+                    # Fallback: método antiguo
+                    X_umap = umap_model.transform(X_pca)
+                
                 new_spectra_data.append(interpolated)
                 new_formulas.append(formula)
                 new_params.append(params)
@@ -773,6 +784,15 @@ def create_visualizations(results):
         mime="application/octet-stream"
     )
 
+def safe_umap_transform(umap_model, training_data, new_data):
+    """
+    Transforma nuevos datos de forma segura con UMAP,
+    concatenando con datos de entrenamiento para consistencia.
+    """
+    combined_data = np.vstack([training_data, new_data])
+    combined_embedding = umap_model.transform(combined_data)
+    return combined_embedding[len(training_data):]
+
 def main():
     """Main function for the Streamlit app"""
     st.markdown('<h1 class="main-header">🧪 Molecular Spectrum Analyzer</h1>', unsafe_allow_html=True)
@@ -858,5 +878,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
