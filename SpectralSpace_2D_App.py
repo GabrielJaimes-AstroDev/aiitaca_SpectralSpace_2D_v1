@@ -14,6 +14,7 @@ from io import BytesIO
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from umap import UMAP
+import traceback
 
 # Set page config
 st.set_page_config(
@@ -46,6 +47,13 @@ st.markdown("""
     .stProgress .st-bo {
         background-color: #1E88E5;
     }
+    .debug-info {
+        background-color: #fff3cd;
+        padding: 10px;
+        border-radius: 5px;
+        border-left: 4px solid #ffc107;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -61,6 +69,8 @@ def load_model(uploaded_model):
         return model
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
+        st.error(f"Error type: {type(e).__name__}")
+        st.error(f"Traceback: {traceback.format_exc()}")
         return None
 
 def extract_molecule_formula(header):
@@ -77,12 +87,52 @@ def extract_molecule_formula(header):
         return formula
     return "Unknown"
 
+def inspect_spectrum_file(file_content, filename):
+    """Inspecciona el contenido del archivo para debugging"""
+    st.subheader(f"🔍 File Inspection: {filename}")
+    
+    content = file_content.getvalue().decode('utf-8')
+    lines = content.split('\n')
+    
+    st.write(f"**Total lines:** {len(lines)}")
+    st.write(f"**First 5 lines:**")
+    for i, line in enumerate(lines[:5]):
+        st.write(f"{i}: {repr(line)}")
+    
+    st.write(f"**Last 5 lines:**")
+    for i, line in enumerate(lines[-5:]):
+        st.write(f"{len(lines)-5+i}: {repr(line)}")
+    
+    # Check for non-numeric values
+    numeric_lines = 0
+    problematic_lines = []
+    for i, line in enumerate(lines):
+        if line.strip() and not line.startswith(('!', '#', '//')):
+            parts = line.split()
+            if len(parts) >= 2:
+                try:
+                    float(parts[0].replace('D', 'E').replace('d', 'E'))
+                    float(parts[1].replace('D', 'E').replace('d', 'E'))
+                    numeric_lines += 1
+                except Exception as e:
+                    problematic_lines.append((i, line, str(e)))
+    
+    st.write(f"**Numeric data lines:** {numeric_lines}")
+    
+    if problematic_lines:
+        st.write(f"**Problematic lines ({len(problematic_lines)}):**")
+        for i, line, error in problematic_lines[:10]:  # Show first 10 problematic lines
+            st.write(f"Line {i}: {repr(line)} -> Error: {error}")
+
 def load_and_interpolate_spectrum(file_content, reference_frequencies, filename):
     """Carga un espectro desde contenido de archivo y lo interpola"""
     try:
         # Decode file content
         content = file_content.getvalue().decode('utf-8')
         lines = content.split('\n')
+        
+        st.markdown(f'<div class="debug-info">🔍 DEBUG: Processing {filename}</div>', unsafe_allow_html=True)
+        st.write(f"🔍 DEBUG: First few lines: {lines[:3]}")
         
         # Determinar el formato del archivo
         first_line = lines[0].strip() if lines else ""
@@ -127,7 +177,8 @@ def load_and_interpolate_spectrum(file_content, reference_frequencies, filename)
             formula = filename.split('.')[0]  # Usar nombre del archivo como fórmula
 
         spectrum_data = []
-        for line in lines[data_start_line:]:
+        problematic_lines = []
+        for line_num, line in enumerate(lines[data_start_line:], data_start_line):
             line = line.strip()
             # Saltar líneas de comentario o vacías
             if not line or line.startswith('!') or line.startswith('#'):
@@ -149,23 +200,54 @@ def load_and_interpolate_spectrum(file_content, reference_frequencies, filename)
                     
                     if np.isfinite(freq) and np.isfinite(intensity):
                         spectrum_data.append([freq, intensity])
+                    else:
+                        problematic_lines.append((line_num, line, "Non-finite values"))
+                else:
+                    problematic_lines.append((line_num, line, "Not enough columns"))
             except Exception as e:
-                st.warning(f"Could not parse line '{line}': {e}")
+                problematic_lines.append((line_num, line, f"Parse error: {e}"))
                 continue
+
+        if problematic_lines:
+            st.warning(f"Found {len(problematic_lines)} problematic lines in {filename}")
+            for line_num, line, error in problematic_lines[:5]:  # Show first 5 problematic lines
+                st.write(f"Line {line_num}: {repr(line)} -> {error}")
 
         if not spectrum_data:
             raise ValueError("No valid data points found in spectrum file")
 
         spectrum_data = np.array(spectrum_data)
+        st.write(f"🔍 DEBUG: Spectrum data shape: {spectrum_data.shape}")
 
         # Ajustar frecuencia si está en GHz (convertir a Hz)
-        if np.max(spectrum_data[:, 0]) < 1e11:  # Si las frecuencias son menores a 100 GHz, probablemente están en GHz
+        max_freq = np.max(spectrum_data[:, 0])
+        st.write(f"🔍 DEBUG: Max frequency before conversion: {max_freq}")
+        
+        if max_freq < 1e11:  # Si las frecuencias son menores a 100 GHz, probablemente están en GHz
             spectrum_data[:, 0] = spectrum_data[:, 0] * 1e9  # Convertir GHz to Hz
+            st.write(f"🔍 DEBUG: Max frequency after conversion: {np.max(spectrum_data[:, 0])}")
             st.info(f"Converted frequencies from GHz to Hz for {filename}")
+
+        # Verificar que las frecuencias estén dentro del rango de referencia
+        ref_min = np.min(reference_frequencies)
+        ref_max = np.max(reference_frequencies)
+        spec_min = np.min(spectrum_data[:, 0])
+        spec_max = np.max(spectrum_data[:, 0])
+        
+        st.write(f"🔍 DEBUG: Reference frequencies range: {ref_min} to {ref_max}")
+        st.write(f"🔍 DEBUG: Spectrum frequencies range: {spec_min} to {spec_max}")
+        
+        # Check if spectrum frequencies overlap with reference frequencies
+        if spec_max < ref_min or spec_min > ref_max:
+            st.error(f"❌ ERROR: Spectrum frequencies ({spec_min}-{spec_max}) do not overlap with reference frequencies ({ref_min}-{ref_max})")
+            return None, None, None, None, None
 
         interpolator = interp1d(spectrum_data[:, 0], spectrum_data[:, 1],
                                 kind='linear', bounds_error=False, fill_value=0.0)
         interpolated = interpolator(reference_frequencies)
+        
+        st.write(f"🔍 DEBUG: Interpolation completed successfully")
+        st.write(f"🔍 DEBUG: Interpolated shape: {interpolated.shape}")
 
         # Extraer parámetros con valores por defecto si faltan
         params = [
@@ -178,7 +260,9 @@ def load_and_interpolate_spectrum(file_content, reference_frequencies, filename)
         return spectrum_data, interpolated, formula, params, filename
     
     except Exception as e:
-        st.error(f"Error processing {filename}: {str(e)}")
+        st.error(f"❌ ERROR processing {filename}: {str(e)}")
+        st.error(f"❌ ERROR type: {type(e).__name__}")
+        st.error(f"❌ ERROR traceback: {traceback.format_exc()}")
         return None, None, None, None, None
 
 def plot_example_spectrum(file_content, reference_frequencies, filename):
@@ -234,6 +318,9 @@ def process_spectra(model, uploaded_files, knn_neighbors=5):
     cumulative_variance = model['cumulative_variance']
     n_components = model['n_components']
     
+    st.write(f"🔍 DEBUG: Reference frequencies shape: {ref_freqs.shape}")
+    st.write(f"🔍 DEBUG: Reference frequencies range: {ref_freqs[0]} to {ref_freqs[-1]}")
+    
     # Procesar todos los nuevos espectros
     new_spectra_data = []
     new_formulas = []
@@ -248,6 +335,9 @@ def process_spectra(model, uploaded_files, knn_neighbors=5):
     for i, uploaded_file in enumerate(uploaded_files):
         status_text.text(f"Processing {uploaded_file.name} ({i+1}/{len(uploaded_files)})")
         progress_bar.progress((i + 1) / len(uploaded_files))
+        
+        # Debug: inspect file first
+        inspect_spectrum_file(uploaded_file, uploaded_file.name)
         
         try:
             spectrum_data, interpolated, formula, params, filename = load_and_interpolate_spectrum(
@@ -269,6 +359,8 @@ def process_spectra(model, uploaded_files, knn_neighbors=5):
                 
         except Exception as e:
             st.error(f"Error processing {uploaded_file.name}: {e}")
+            st.error(f"Error type: {type(e).__name__}")
+            st.error(f"Traceback: {traceback.format_exc()}")
             continue
 
     if not new_embeddings:
@@ -668,6 +760,10 @@ def main():
         st.subheader("Analysis Parameters")
         knn_neighbors = st.slider("Number of KNN Neighbors", min_value=1, max_value=20, value=5)
         
+        # Debug options
+        st.subheader("Debug Options")
+        enable_debug = st.checkbox("Enable Debug Mode", value=True)
+        
         # Process button
         process_btn = st.button("Process Spectra", type="primary")
     
@@ -679,6 +775,14 @@ def main():
         
         if model:
             st.success(f"Model loaded successfully! Training samples: {model['sample_size']}")
+            
+            # Show model info
+            if enable_debug:
+                st.subheader("Model Information")
+                st.write(f"- Number of components: {model['n_components']}")
+                st.write(f"- Variance threshold: {model['variance_threshold']}")
+                st.write(f"- Reference frequencies shape: {model['reference_frequencies'].shape}")
+                st.write(f"- Training formulas: {np.unique(model['formulas'])}")
             
             # Process spectra
             with st.spinner("Processing spectra..."):
@@ -722,3 +826,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
