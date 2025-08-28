@@ -505,11 +505,13 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
     successful_files = 0
     for spectrum_file in spectra_files:
         try:
-            # Read file content once
+            # OBTENER EL CONTENIDO COMPLETO DEL ARCHIVO
             file_content = spectrum_file.getvalue()
+            
             spectrum_data, interpolated, formula, params, filename = load_and_interpolate_spectrum(
                 file_content, spectrum_file.name, ref_freqs
             )
+
             
             # Transform the spectrum
             X_scaled = scaler.transform([interpolated])
@@ -550,5 +552,6 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
