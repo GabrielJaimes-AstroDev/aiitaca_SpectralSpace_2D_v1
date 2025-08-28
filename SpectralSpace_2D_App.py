@@ -259,7 +259,7 @@ def load_and_interpolate_spectrum(file_content, reference_frequencies, filename)
 
         if not np.all(np.isfinite(interpolated)):
             st.error(f"❌ ERROR: Interpolated spectrum for {filename} contains NaN or inf values.")
-            continue
+            return None, None, None, None, None
 
         return spectrum_data, interpolated, formula, params, filename
     
