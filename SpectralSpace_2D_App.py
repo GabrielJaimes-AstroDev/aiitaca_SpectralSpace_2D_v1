@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import tempfile
 from tqdm import tqdm
+from sklearn.metrics import pairwise_distances
 
 # Set page configuration
 st.set_page_config(
@@ -238,7 +239,7 @@ def create_safe_dataframe_for_plotting(model, results):
         # Create training data
         train_data = {
             'umap_x': model['embedding'][:, 0].astype(float),
-            'umap_y': model['embedding'][:, 1].astype(float),
+            'umap_y': model['embedding'][:, 1].ast(float),
             'formula': [str(f) for f in model['formulas']],
             'logn': model['y'][:, 0].astype(float),
             'tex': model['y'][:, 1].astype(float),
@@ -283,6 +284,132 @@ def create_safe_dataframe_for_plotting(model, results):
         st.error(f"Error creating DataFrame for plotting: {str(e)}")
         # Return empty DataFrame as fallback
         return pd.DataFrame()
+
+def ensure_umap_compatibility(umap_model, X_pca):
+    """Asegura que los datos sean compatibles con el modelo UMAP"""
+    try:
+        # Verificar dimensiones
+        if X_pca.shape[1] != umap_model.n_features_in_:
+            st.warning(f"Dimension mismatch: Expected {umap_model.n_features_in_} features, got {X_pca.shape[1]}")
+            
+            # Ajustar dimensiones
+            if X_pca.shape[1] > umap_model.n_features_in_:
+                # Tomar solo las primeras n componentes necesarias
+                X_pca = X_pca[:, :umap_model.n_features_in_]
+            else:
+                # Padding con ceros para las dimensiones faltantes
+                padding = np.zeros((X_pca.shape[0], umap_model.n_features_in_ - X_pca.shape[1]))
+                X_pca = np.hstack([X_pca, padding])
+        
+        # Verificar que no haya NaN o infinitos
+        if np.any(np.isnan(X_pca)) or np.any(np.isinf(X_pca)):
+            st.warning("NaN or Inf values detected in PCA data. Replacing with zeros.")
+            X_pca = np.nan_to_num(X_pca, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        return X_pca
+        
+    except Exception as e:
+        st.error(f"Error in UMAP compatibility check: {str(e)}")
+        return X_pca
+
+def analyze_spectra(model, spectra_files, knn_neighbors=5):
+    """Analyze uploaded spectra using the trained model"""
+    results = {
+        'X_new': [],
+        'y_new': [],
+        'formulas_new': [],
+        'filenames_new': [],
+        'pca_components_new': [],
+        'umap_embedding_new': [],
+        'knn_neighbors': []
+    }
+    
+    # Get model components
+    scaler = model['scaler']
+    pca = model['pca']
+    umap_model = model['umap']
+    ref_freqs = model['reference_frequencies']
+    
+    # Process each spectrum
+    successful_files = 0
+    for spectrum_file in spectra_files:
+        try:
+            st.write(f"Processing: {spectrum_file.name}")
+            
+            # Reset file pointer and read content
+            if hasattr(spectrum_file, 'seek'):
+                spectrum_file.seek(0)
+            file_content = spectrum_file.read()
+            
+            spectrum_data, interpolated, formula, params, filename = load_and_interpolate_spectrum(
+                file_content, spectrum_file.name, ref_freqs
+            )
+            
+            # Transformar el espectro
+            X_scaled = scaler.transform([interpolated])
+            X_pca = pca.transform(X_scaled)
+            
+            # Asegurar compatibilidad con UMAP
+            X_pca_processed = ensure_umap_compatibility(umap_model, X_pca)
+            
+            # Proyección UMAP con manejo robusto de errores
+            try:
+                X_umap = umap_model.transform(X_pca_processed)
+                
+                # Verificar que la proyección sea válida
+                if np.any(np.isnan(X_umap)) or np.any(np.isinf(X_umap)):
+                    raise ValueError("UMAP projection contains NaN or Inf values")
+                    
+            except Exception as umap_error:
+                st.warning(f"UMAP transformation failed for {filename}: {umap_error}")
+                st.warning("Using robust alternative embedding method...")
+                
+                # Método alternativo MEJORADO basado en distancias al training set
+                train_embeddings = model['embedding']
+                train_pca = model.get('pca_components', X_pca_processed)
+                
+                # Calcular distancias a todos los puntos de entrenamiento
+                distances = pairwise_distances(X_pca_processed, train_pca)
+                
+                # Encontrar el vecino más cercano
+                nearest_idx = np.argmin(distances)
+                
+                # Usar la posición del vecino más cercano con pequeño ruido aleatorio
+                X_umap = train_embeddings[nearest_idx:nearest_idx+1] + np.random.normal(0, 0.1, size=(1, 2))
+            
+            results['X_new'].append(interpolated)
+            results['formulas_new'].append(formula)
+            results['y_new'].append(params)
+            results['filenames_new'].append(filename)
+            results['umap_embedding_new'].append(X_umap[0])
+            results['pca_components_new'].append(X_pca[0])
+            
+            successful_files += 1
+            
+        except Exception as e:
+            st.error(f"Error processing {spectrum_file.name}: {str(e)}")
+            import traceback
+            st.error(f"Detailed error: {traceback.format_exc()}")
+            continue
+    
+    st.info(f"Successfully processed {successful_files} out of {len(spectra_files)} spectrum files.")
+    
+    # Convert to arrays
+    if results['umap_embedding_new']:
+        results['X_new'] = np.array(results['X_new'])
+        results['y_new'] = np.array(results['y_new'])
+        results['formulas_new'] = np.array(results['formulas_new'])
+        results['umap_embedding_new'] = np.array(results['umap_embedding_new'])
+        results['pca_components_new'] = np.array(results['pca_components_new'])
+        
+        # Find KNN neighbors
+        results['knn_neighbors'] = find_knn_neighbors(
+            model['embedding'], results['umap_embedding_new'], k=knn_neighbors
+        )
+    else:
+        st.error("No valid spectra could be processed. Please check your spectrum files.")
+    
+    return results
 
 def main():
     st.title("🧪 Molecular Spectrum Analyzer")
@@ -520,116 +647,5 @@ def main():
             mime="text/csv"
         )
 
-def analyze_spectra(model, spectra_files, knn_neighbors=5):
-    """Analyze uploaded spectra using the trained model"""
-    results = {
-        'X_new': [],
-        'y_new': [],
-        'formulas_new': [],
-        'filenames_new': [],
-        'pca_components_new': [],
-        'umap_embedding_new': [],
-        'knn_neighbors': []
-    }
-    
-    # Get model components
-    scaler = model['scaler']
-    pca = model['pca']
-    umap_model = model['umap']
-    ref_freqs = model['reference_frequencies']
-    
-    # Process each spectrum
-    successful_files = 0
-    for spectrum_file in spectra_files:
-        try:
-            st.write(f"Processing: {spectrum_file.name}")
-            
-            # Reset file pointer and read content
-            if hasattr(spectrum_file, 'seek'):
-                spectrum_file.seek(0)
-            file_content = spectrum_file.read()
-            
-            spectrum_data, interpolated, formula, params, filename = load_and_interpolate_spectrum(
-                file_content, spectrum_file.name, ref_freqs
-            )
-            
-            # Transformar el espectro
-            X_scaled = scaler.transform([interpolated])
-            X_pca = pca.transform(X_scaled)
-            
-            # SOLUCIÓN: Manejar la transformación UMAP con try-catch
-            # Reemplaza esta sección en tu función analyze_spectra:
-        try:
-            X_umap = umap_model.transform(X_pca)
-        except Exception as umap_error:
-            st.warning(f"UMAP transformation failed for {filename}: {umap_error}")
-            st.warning("Using alternative embedding method based on PCA...")
-            
-            # Método alternativo MEJORADO: Proyectar en el espacio de training
-            if 'embedding' in model and 'pca_components' in model:
-                # Calcular distancias a los centroides de training en espacio PCA
-                from sklearn.metrics import pairwise_distances
-                
-                # Usar las mismas dimensiones que el embedding UMAP original
-                n_components = min(2, X_pca.shape[1])
-                
-                # Reducir a 2D usando las primeras componentes PCA
-                # pero escaladas para coincidir con el rango del UMAP training
-                train_embedding = model['embedding']
-                train_pca = model.get('pca_components', X_pca)
-                
-                # Escalar la nueva muestra al mismo rango que el training PCA
-                pca_scaled = (X_pca - train_pca.mean(axis=0)) / (train_pca.std(axis=0) + 1e-8)
-                
-                # Reducir dimensionalidad si es necesario
-                if pca_scaled.shape[1] > 2:
-                    pca_scaled = pca_scaled[:, :2]
-                
-                # Escalar al rango del embedding UMAP
-                X_umap = (pca_scaled * train_embedding.std(axis=0)) + train_embedding.mean(axis=0)
-            else:
-                # Fallback simple: usar primeras 2 componentes PCA
-                X_umap = X_pca[:, :2]
-            
-            results['X_new'].append(interpolated)
-            results['formulas_new'].append(formula)
-            results['y_new'].append(params)
-            results['filenames_new'].append(filename)
-            results['umap_embedding_new'].append(X_umap[0])
-            results['pca_components_new'].append(X_pca[0])
-            
-            successful_files += 1
-            
-        except Exception as e:
-            st.error(f"Error processing {spectrum_file.name}: {str(e)}")
-            import traceback
-            st.error(f"Detailed error: {traceback.format_exc()}")
-            continue
-    
-    st.info(f"Successfully processed {successful_files} out of {len(spectra_files)} spectrum files.")
-    
-    # Convert to arrays
-    if results['umap_embedding_new']:
-        results['X_new'] = np.array(results['X_new'])
-        results['y_new'] = np.array(results['y_new'])
-        results['formulas_new'] = np.array(results['formulas_new'])
-        results['umap_embedding_new'] = np.array(results['umap_embedding_new'])
-        results['pca_components_new'] = np.array(results['pca_components_new'])
-        
-        # Find KNN neighbors
-        results['knn_neighbors'] = find_knn_neighbors(
-            model['embedding'], results['umap_embedding_new'], k=knn_neighbors
-        )
-    else:
-        st.error("No valid spectra could be processed. Please check your spectrum files.")
-    
-    return results
-
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
