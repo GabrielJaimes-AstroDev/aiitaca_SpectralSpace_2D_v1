@@ -257,6 +257,10 @@ def load_and_interpolate_spectrum(file_content, reference_frequencies, filename)
             param_dict.get('fwhm', np.nan)
         ]
 
+        if not np.all(np.isfinite(interpolated)):
+            st.error(f"❌ ERROR: Interpolated spectrum for {filename} contains NaN or inf values.")
+            continue
+
         return spectrum_data, interpolated, formula, params, filename
     
     except Exception as e:
@@ -385,13 +389,21 @@ def process_spectra(model, uploaded_files, knn_neighbors=5):
                 
                 # TRANSFORMACIÓN SEGURA UMAP
                 if 'X_pca_train' in model:
-                    X_umap = safe_umap_transform(
-                        umap_model,
-                        model['X_pca_train'],
-                        X_pca
-                    )
+                    # Verifica dimensiones
+                    if X_pca.shape[1] != model['X_pca_train'].shape[1]:
+                        st.error(f"❌ ERROR: PCA dimension mismatch. Model expects {model['X_pca_train'].shape[1]}, got {X_pca.shape[1]}")
+                        continue
+                    try:
+                        X_umap = safe_umap_transform(
+                            umap_model,
+                            model['X_pca_train'],
+                            X_pca
+                        )
+                    except Exception as e:
+                        st.error(f"❌ ERROR in UMAP transformation: {e}")
+                        st.error(f"❌ ERROR traceback: {traceback.format_exc()}")
+                        continue
                 else:
-                    # Fallback: método antiguo
                     X_umap = umap_model.transform(X_pca)
                 
                 new_spectra_data.append(interpolated)
