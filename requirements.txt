@@ -1,5 +1,5 @@
 # Streamlit app
-streamlit>=1.30.0
+streamlit>=1.36.0
 
 # Ciencia de datos y ML
 numpy==1.26.4
@@ -18,3 +18,4 @@ llvmlite==0.44.0
 pynndescent==0.5.13
 
 mol2vec==0.2.2
+
