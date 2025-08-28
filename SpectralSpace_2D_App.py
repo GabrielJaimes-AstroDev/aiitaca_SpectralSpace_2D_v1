@@ -182,9 +182,12 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
             param_dict.get('velo', np.nan),
             param_dict.get('fwhm', np.nan)
         ]
-
-        return spectrum_data, interpolated, formula, params, filename
+        # Sanitize and shorten filename to avoid OS errors (ENAMETOOLONG)
+        safe_filename = sanitize_filename(os.path.basename(filename))[:60]
         
+        return spectrum_data, interpolated, formula, params, safe_filename
+
+
     except Exception as e:
         st.error(f"Error processing {filename}: {str(e)}")
         raise
@@ -564,3 +567,4 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
