@@ -62,27 +62,22 @@ def extract_molecule_formula(header):
 def load_and_interpolate_spectrum(file_content, filename, reference_frequencies):
     """Carga un espectro desde contenido de archivo y lo interpola a las frecuencias de referencia"""
     try:
-        # Handle different file encodings and line endings
-        try:
-            content = file_content.decode('utf-8')
-        except (UnicodeDecodeError, AttributeError):
+        # Convertir el contenido a líneas (manejar diferentes tipos de entrada)
+        if isinstance(file_content, bytes):
+            # Si es bytes, decodificar
             try:
+                content = file_content.decode('utf-8')
+            except UnicodeDecodeError:
                 content = file_content.decode('latin-1')
-            except:
-                # If it's already a string or other issue
-                if isinstance(file_content, str):
-                    content = file_content
-                else:
-                    content = file_content.decode('utf-8', errors='ignore')
-        
+        else:
+            # Si ya es string
+            content = file_content
+            
         lines = content.splitlines()
         
-        # Skip empty files
-        if not lines:
-            raise ValueError("Empty file")
-        
-        # Determinar el formato del archivo
+        # Resto del código igual que en tu script original...
         first_line = lines[0].strip() if lines else ""
+        second_line = lines[1].strip() if len(lines) > 1 else ""
         
         formula = "Unknown"
         param_dict = {}
@@ -123,9 +118,7 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
             formula = filename.split('.')[0]  # Usar nombre del archivo como fórmula
 
         spectrum_data = []
-        line_number = data_start_line
         for line in lines[data_start_line:]:
-            line_number += 1
             line = line.strip()
             # Saltar líneas de comentario o vacías
             if not line or line.startswith('!') or line.startswith('#') or line.startswith('//'):
@@ -133,32 +126,22 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
                 
             try:
                 parts = line.split()
-                if len(parts) < 2:
-                    continue
-                
-                # Clean parts from any non-numeric characters except for scientific notation
-                freq_part = parts[0].strip()
-                intensity_part = parts[1].strip()
-                
-                # Remove any non-numeric characters except for ., -, +, E, e, D, d
-                freq_clean = re.sub(r'[^\d\.\-+EeDd]', '', freq_part)
-                intensity_clean = re.sub(r'[^\d\.\-+EeDd]', '', intensity_part)
-                
-                # Skip if empty after cleaning
-                if not freq_clean or not intensity_clean:
-                    continue
-                
-                # Replace D/d with E for scientific notation
-                freq_clean = freq_clean.replace('D', 'E').replace('d', 'E')
-                intensity_clean = intensity_clean.replace('D', 'E').replace('d', 'E')
-                
-                freq = float(freq_clean)
-                intensity = float(intensity_clean)
-                
-                if np.isfinite(freq) and np.isfinite(intensity):
-                    spectrum_data.append([freq, intensity])
+                if len(parts) >= 2:
+                    # Intentar diferentes formatos de números
+                    try:
+                        freq = float(parts[0])
+                        intensity = float(parts[1])
+                    except ValueError:
+                        # Intentar con notación científica que pueda tener D instead of E
+                        freq_str = parts[0].replace('D', 'E').replace('d', 'E')
+                        intensity_str = parts[1].replace('D', 'E').replace('d', 'E')
+                        freq = float(freq_str)
+                        intensity = float(intensity_str)
+                    
+                    if np.isfinite(freq) and np.isfinite(intensity):
+                        spectrum_data.append([freq, intensity])
             except Exception as e:
-                st.warning(f"Could not parse line {line_number} '{line}' in {filename}: {str(e)}")
+                st.warning(f"Warning: Could not parse line '{line}' in {filename}: {e}")
                 continue
 
         if not spectrum_data:
@@ -182,11 +165,11 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
             param_dict.get('velo', np.nan),
             param_dict.get('fwhm', np.nan)
         ]
-        # Sanitize and shorten filename to avoid OS errors (ENAMETOOLONG)
+        
+        # Sanitize filename
         safe_filename = sanitize_filename(os.path.basename(filename))[:60]
         
         return spectrum_data, interpolated, formula, params, safe_filename
-
 
     except Exception as e:
         st.error(f"Error processing {filename}: {str(e)}")
@@ -567,4 +550,5 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
