@@ -309,6 +309,38 @@ def find_knn_neighbors(training_embeddings, new_embeddings, k=5):
     
     return all_neighbor_indices
 
+def safe_umap_transform(umap_model, training_data, new_data):
+    """
+    Transforma nuevos datos de forma segura con UMAP,
+    manejando posibles errores de compatibilidad.
+    """
+    try:
+        # Intentar transformación directa primero
+        return umap_model.transform(new_data)
+    except Exception as e:
+        st.warning(f"UMAP direct transform failed: {e}. Using alternative approach.")
+        
+        try:
+            # Alternativa: crear nuevo UMAP con mismos parámetros
+            alt_umap = UMAP(
+                n_components=umap_model.n_components,
+                n_neighbors=umap_model.n_neighbors,
+                min_dist=umap_model.min_dist,
+                metric=umap_model.metric,
+                random_state=42,
+                low_memory=True
+            )
+            
+            # Ajustar con datos de entrenamiento y transformar
+            alt_umap.fit(training_data)
+            return alt_umap.transform(new_data)
+            
+        except Exception as alt_e:
+            st.error(f"Alternative UMAP also failed: {alt_e}")
+            # Último recurso: usar PCA directamente
+            st.info("Using PCA components as fallback for UMAP")
+            return new_data[:, :2]  # Tomar solo las primeras 2 componentes
+
 def process_spectra(model, uploaded_files, knn_neighbors=5):
     """Procesa los espectros cargados y genera resultados"""
     results = {}
@@ -353,58 +385,12 @@ def process_spectra(model, uploaded_files, knn_neighbors=5):
                 X_scaled = scaler.transform([interpolated])
                 X_pca = pca.transform(X_scaled)
                 
-                # SOLUCIÓN: Manejar el error de UMAP de forma más robusta
-                try:
-                    X_umap = umap_model.transform(X_pca)
-                except Exception as e:
-                    st.warning(f"UMAP transformation failed for {filename}: {e}")
-                    st.warning("Using alternative approach: fitting new UMAP on PCA components")
-                    
-                    # Alternativa: Crear un nuevo UMAP con los mismos parámetros
-                    try:
-                        # Crear UMAP con mismos parámetros pero forzando reproducible
-                        alt_umap = UMAP(
-                            n_components=umap_model.n_components,
-                            n_neighbors=umap_model.n_neighbors,
-                            min_dist=umap_model.min_dist,
-                            metric=umap_model.metric,
-                            random_state=42,  # Forzar random state para reproducibilidad
-                            low_memory=True   # Modo de baja memoria
-                        )
-                        
-                        # Ajustar con datos de entrenamiento y transformar
-                        if 'X_pca_train' not in model:
-                            # Si no tenemos los datos PCA de entrenamiento, no podemos hacer esto
-                            raise ValueError("No training PCA data available for alternative UMAP")
-                        
-                        # Ajustar con datos de entrenamiento y transformar
-                        alt_umap.fit(model['X_pca_train'])
-                        X_umap = alt_umap.transform(X_pca)
-                        
-                    except Exception as alt_e:
-                        st.error(f"Alternative UMAP also failed: {alt_e}")
-                        # Último recurso: usar los componentes PCA directamente
-                        X_umap = X_pca[:, :2]  # Tomar solo las primeras 2 componentes
-                        st.info("Using first 2 PCA components as fallback")
-                
-                # TRANSFORMACIÓN SEGURA UMAP
-                if 'X_pca_train' in model:
-                    # Verifica dimensiones
-                    if X_pca.shape[1] != model['X_pca_train'].shape[1]:
-                        st.error(f"❌ ERROR: PCA dimension mismatch. Model expects {model['X_pca_train'].shape[1]}, got {X_pca.shape[1]}")
-                        continue
-                    try:
-                        X_umap = safe_umap_transform(
-                            umap_model,
-                            model['X_pca_train'],
-                            X_pca
-                        )
-                    except Exception as e:
-                        st.error(f"❌ ERROR in UMAP transformation: {e}")
-                        st.error(f"❌ ERROR traceback: {traceback.format_exc()}")
-                        continue
-                else:
-                    X_umap = umap_model.transform(X_pca)
+                # Transformación UMAP robusta
+                X_umap = safe_umap_transform(
+                    umap_model,
+                    model.get('X_pca_train', model.get('X_pca', np.array([]))),
+                    X_pca
+                )
                 
                 new_spectra_data.append(interpolated)
                 new_formulas.append(formula)
@@ -433,6 +419,7 @@ def process_spectra(model, uploaded_files, knn_neighbors=5):
     
     # Compilar resultados
     results = {
+        'new_spectra_data': new_spectra_data,
         'new_embeddings': new_embeddings,
         'new_params': new_params,
         'new_formulas': new_formulas,
@@ -446,6 +433,7 @@ def process_spectra(model, uploaded_files, knn_neighbors=5):
     status_text.empty()
     
     return results
+
 def create_visualizations(results):
     """Crea visualizaciones interactivas de los resultados"""
     if not results:
@@ -688,18 +676,7 @@ def create_visualizations(results):
                 else:
                     st.info("No KNN neighbors found for this prediction")
     
-    # 7. Example spectrum plots for each new spectrum
-    st.subheader("Example Spectra")
-    cols = st.columns(2)
-    
-    for i, uploaded_file in enumerate(results['uploaded_files']):
-        with cols[i % 2]:
-            fig = plot_example_spectrum(uploaded_file, model['reference_frequencies'], uploaded_file.name)
-            if fig:
-                st.pyplot(fig)
-                plt.close(fig)
-    
-    # 8. Download results
+    # 7. Download results
     st.subheader("Download Results")
     
     # Create prediction coordinates
@@ -796,15 +773,6 @@ def create_visualizations(results):
         mime="application/octet-stream"
     )
 
-def safe_umap_transform(umap_model, training_data, new_data):
-    """
-    Transforma nuevos datos de forma segura con UMAP,
-    concatenando con datos de entrenamiento para consistencia.
-    """
-    combined_data = np.vstack([training_data, new_data])
-    combined_embedding = umap_model.transform(combined_data)
-    return combined_embedding[len(training_data):]
-
 def main():
     """Main function for the Streamlit app"""
     st.markdown('<h1 class="main-header">🧪 Molecular Spectrum Analyzer</h1>', unsafe_allow_html=True)
@@ -890,4 +858,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
