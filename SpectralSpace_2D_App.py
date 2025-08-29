@@ -399,7 +399,6 @@ def main():
                     x=model['reference_frequencies'],
                     y=results['X_new'][selected_idx],
                     mode='lines',
-                    name=truncate_filename(results['filenames_new'][selected_idx]),
                     line=dict(color='blue', width=2)
                 ))
                 
@@ -640,3 +639,4 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
