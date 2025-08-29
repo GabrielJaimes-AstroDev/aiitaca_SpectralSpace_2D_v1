@@ -548,6 +548,9 @@ def main():
                     
                     fig.update_layout(
                         title="K-Nearest Neighbors in UMAP Space",
+                        width=700,
+                        height=700,
+                        autosize=False,
                         xaxis_title="UMAP 1",
                         yaxis_title="UMAP 2",
                         showlegend=True
@@ -648,5 +651,6 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
