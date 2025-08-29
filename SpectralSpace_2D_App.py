@@ -378,7 +378,7 @@ def main():
                 row=row, col=col
             )
     
-    fig.update_layout(height=600, showlegend=False, title_text="Parameter Distributions")
+    fig.update_layout(height=600, showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
     
     # Individual spectrum analysis
@@ -657,6 +657,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
