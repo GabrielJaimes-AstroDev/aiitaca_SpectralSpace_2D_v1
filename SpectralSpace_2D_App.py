@@ -32,12 +32,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def sanitize_filename(filename):
-    """Elimina caracteres inválidos de los nombres de archivo"""
+    """Remove invalid characters from filenames"""
     invalid_chars = r'[<>:"/\\|?*]'
     return re.sub(invalid_chars, '_', filename)
 
 def load_model(model_file):
-    """Carga el modelo entrenado desde un archivo subido"""
+    """Load trained model from uploaded file"""
     try:
         model = pickle.load(model_file)
         return model
@@ -60,10 +60,10 @@ def extract_molecule_formula(header):
     return "Unknown"
 
 def load_and_interpolate_spectrum(file_content, filename, reference_frequencies):
-    """Carga un espectro desde contenido de archivo y lo interpola a las frecuencias de referencia"""
+    """Load spectrum from file content and interpolate to reference frequencies"""
     lines = file_content.decode('utf-8').splitlines()
     
-    # Determinar el formato del archivo
+    # Determine file format
     first_line = lines[0].strip()
     second_line = lines[1].strip() if len(lines) > 1 else ""
     
@@ -71,12 +71,12 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
     param_dict = {}
     data_start_line = 0
     
-    # Formato 1: con header de molécula y parámetros
+    # Format 1: with molecule and parameters header
     if first_line.startswith('//') and 'molecules=' in first_line:
         header = first_line[2:].strip()  # Remove the '//'
         formula = extract_molecule_formula(header)
         
-        # Extraer parámetros del header
+        # Extract parameters from header
         for part in header.split():
             if '=' in part:
                 try:
@@ -93,34 +93,34 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
                     continue
         data_start_line = 1
     
-    # Formato 2: con header de columnas
+    # Format 2: with column header
     elif first_line.startswith('!') or first_line.startswith('#'):
-        # Intentar extraer información del header si está disponible
+        # Try to extract information from header if available
         if 'molecules=' in first_line:
             formula = extract_molecule_formula(first_line)
         data_start_line = 1
     
-    # Formato 3: sin header, solo datos
+    # Format 3: no header, only data
     else:
         data_start_line = 0
-        formula = filename.split('.')[0]  # Usar nombre del archivo como fórmula
+        formula = filename.split('.')[0]  # Use filename as formula
 
     spectrum_data = []
     for line in lines[data_start_line:]:
         line = line.strip()
-        # Saltar líneas de comentario o vacías
+        # Skip comment or empty lines
         if not line or line.startswith('!') or line.startswith('#'):
             continue
             
         try:
             parts = line.split()
             if len(parts) >= 2:
-                # Intentar diferentes formatos de números
+                # Try different number formats
                 try:
                     freq = float(parts[0])
                     intensity = float(parts[1])
                 except ValueError:
-                    # Intentar con notación científica que pueda tener D instead of E
+                    # Try scientific notation that might have D instead of E
                     freq_str = parts[0].replace('D', 'E').replace('d', 'E')
                     intensity_str = parts[1].replace('D', 'E').replace('d', 'E')
                     freq = float(freq_str)
@@ -137,16 +137,16 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
 
     spectrum_data = np.array(spectrum_data)
 
-    # Ajustar frecuencia si está en GHz (convertir a Hz)
-    if np.max(spectrum_data[:, 0]) < 1e11:  # Si las frecuencias son menores a 100 GHz, probablemente están en GHz
-        spectrum_data[:, 0] = spectrum_data[:, 0] * 1e9  # Convertir GHz to Hz
+    # Adjust frequency if in GHz (convert to Hz)
+    if np.max(spectrum_data[:, 0]) < 1e11:  # If frequencies are less than 100 GHz, probably in GHz
+        spectrum_data[:, 0] = spectrum_data[:, 0] * 1e9  # Convert GHz to Hz
         st.info(f"Converted frequencies from GHz to Hz for {filename}")
 
     interpolator = interp1d(spectrum_data[:, 0], spectrum_data[:, 1],
                             kind='linear', bounds_error=False, fill_value=0.0)
     interpolated = interpolator(reference_frequencies)
 
-    # Extraer parámetros con valores por defecto si faltan
+    # Extract parameters with default values if missing
     params = [
         param_dict.get('logn', np.nan),
         param_dict.get('tex', np.nan),
@@ -157,11 +157,11 @@ def load_and_interpolate_spectrum(file_content, filename, reference_frequencies)
     return spectrum_data, interpolated, formula, params, filename
 
 def find_knn_neighbors(training_embeddings, new_embeddings, k=5):
-    """Encuentra los k vecinos más cercanos usando KNN"""
+    """Find k nearest neighbors using KNN"""
     if len(training_embeddings) == 0 or len(new_embeddings) == 0:
         return []
     
-    # Asegurar que k no sea mayor que el número de puntos de entrenamiento
+    # Ensure k is not greater than number of training points
     k = min(k, len(training_embeddings))
     
     knn = NearestNeighbors(n_neighbors=k, metric='euclidean')
@@ -170,7 +170,7 @@ def find_knn_neighbors(training_embeddings, new_embeddings, k=5):
     all_neighbor_indices = []
     for new_embedding in new_embeddings:
         distances, indices = knn.kneighbors([new_embedding])
-        # Verificar que los índices estén dentro del rango válido
+        # Verify indices are within valid range
         valid_indices = [idx for idx in indices[0] if idx < len(training_embeddings)]
         all_neighbor_indices.append(valid_indices)
     
@@ -291,7 +291,7 @@ def main():
         new_df = pd.DataFrame({
             'umap_x': results['umap_embedding_new'][:, 0],
             'umap_y': results['umap_embedding_new'][:, 1],
-            'formula': results['formulas_new'],
+            'formula': results['filenames_new'],  # Use filename instead of formula
             'logn': results['y_new'][:, 0],
             'tex': results['y_new'][:, 1],
             'velo': results['y_new'][:, 2],
@@ -308,6 +308,19 @@ def main():
     fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='formula', 
                      symbol='type', hover_data=['logn', 'tex', 'velo', 'fwhm', 'filename'],
                      title='UMAP Projection of Molecular Spectra')
+    
+    # Update layout to make it square and set colors for new spectra
+    fig.update_layout(
+        width=700,
+        height=700,
+        autosize=False
+    )
+    
+    # Update marker size and color for new spectra
+    for i, trace in enumerate(fig.data):
+        if trace.name == 'New':
+            trace.marker.update(size=12, color='black')
+    
     st.plotly_chart(fig, use_container_width=True)
     
     # Parameter distribution plots
@@ -363,21 +376,44 @@ def main():
                 st.pyplot(fig)
             
             with col2:
+                # Calculate average parameters from KNN neighbors
+                if 'knn_neighbors' in results and selected_idx < len(results['knn_neighbors']):
+                    neighbor_indices = results['knn_neighbors'][selected_idx]
+                    
+                    if neighbor_indices:
+                        # Calculate average parameters
+                        avg_params = [
+                            np.nanmean(model['y'][neighbor_indices, 0]),  # logn
+                            np.nanmean(model['y'][neighbor_indices, 1]),  # tex
+                            np.nanmean(model['y'][neighbor_indices, 2]),  # velo
+                            np.nanmean(model['y'][neighbor_indices, 3])   # fwhm
+                        ]
+                        
+                        # Find most common formula in neighbors
+                        neighbor_formulas = [model['formulas'][idx] for idx in neighbor_indices]
+                        most_common_formula = max(set(neighbor_formulas), key=neighbor_formulas.count)
+                    else:
+                        avg_params = [np.nan, np.nan, np.nan, np.nan]
+                        most_common_formula = "Unknown"
+                else:
+                    avg_params = [np.nan, np.nan, np.nan, np.nan]
+                    most_common_formula = "Unknown"
+                
                 # Show parameters
                 st.markdown("**Estimated Parameters**")
                 param_data = {
                     'Parameter': param_labels,
                     'Value': [
-                        results['y_new'][selected_idx, 0],
-                        results['y_new'][selected_idx, 1],
-                        results['y_new'][selected_idx, 2],
-                        results['y_new'][selected_idx, 3]
+                        f"{avg_params[0]:.2f}" if not np.isnan(avg_params[0]) else "N/A",
+                        f"{avg_params[1]:.2f}" if not np.isnan(avg_params[1]) else "N/A",
+                        f"{avg_params[2]:.2f}" if not np.isnan(avg_params[2]) else "N/A",
+                        f"{avg_params[3]:.2f}" if not np.isnan(avg_params[3]) else "N/A"
                     ]
                 }
                 st.table(pd.DataFrame(param_data))
                 
                 # Show molecule formula
-                st.markdown(f"**Molecule Formula**: {results['formulas_new'][selected_idx]}")
+                st.markdown(f"**Molecule Formula**: {most_common_formula}")
             
             # KNN Neighbors analysis
             st.markdown("**K-Nearest Neighbors Analysis**")
@@ -432,7 +468,7 @@ def main():
                         mode='markers',
                         marker=dict(color='red', size=15, symbol='star'),
                         name='Selected Spectrum',
-                        text=[results['formulas_new'][selected_idx]],
+                        text=[results['filenames_new'][selected_idx]],  # Use filename instead of formula
                         hoverinfo='text'
                     ))
                     
@@ -538,5 +574,3 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
-
-
