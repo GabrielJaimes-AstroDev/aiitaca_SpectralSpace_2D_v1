@@ -291,7 +291,7 @@ def main():
     st.header("Analysis Results")
     
     # UMAP Visualization
-    st.subheader("UMAP Projection")
+    st.subheader("A. UMAP Projection")
     
     # Create combined data for plotting
     train_df = pd.DataFrame({
@@ -353,7 +353,7 @@ def main():
     st.plotly_chart(fig, use_container_width=True)
     
     # Parameter distribution plots
-    st.subheader("Parameter Distributions")
+    st.subheader("B. Parameter Distributions")
     
     param_names = ['logn', 'tex', 'velo', 'fwhm']
     param_labels = ['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
@@ -383,7 +383,7 @@ def main():
     
     # Individual spectrum analysis
     if len(results['umap_embedding_new']) > 0:
-        st.subheader("Individual Spectrum Analysis")
+        st.subheader("C. Individual Spectrum Analysis")
         
         # Select a spectrum to analyze
         selected_idx = st.selectbox("Select a spectrum for detailed analysis", 
@@ -657,6 +657,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
