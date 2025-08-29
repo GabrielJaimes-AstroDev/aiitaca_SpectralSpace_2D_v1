@@ -395,12 +395,7 @@ def main():
                 truncated_title = truncate_title(f"Spectrum: {results['filenames_new'][selected_idx]}")
                 
                 spectrum_fig = go.Figure()
-                spectrum_fig.add_trace(go.Scatter(
-                    x=model['reference_frequencies'],
-                    y=results['X_new'][selected_idx],
-                    mode='lines',
-                    line=dict(color='blue', width=2)
-                ))
+
                 
                 spectrum_fig.update_layout(
                     title=truncated_title,
@@ -639,4 +634,5 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
