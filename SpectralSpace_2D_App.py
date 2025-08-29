@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 import tempfile
+import traceback
 
 # Configuración de la página
 st.set_page_config(
@@ -93,15 +94,35 @@ def process_prediction_spectrum(file_content, filename, reference_frequencies):
     except Exception as e:
         raise ValueError(f"Error processing file {filename}: {str(e)}")
 
-# Función para cargar el modelo
+# Función para cargar el modelo con manejo robusto de errores
 @st.cache_resource
 def load_model(model_file):
-    """Carga el modelo preentrenado desde un archivo .pkl"""
+    """Carga el modelo preentrenado desde un archivo .pkl con manejo robusto de errores"""
     try:
-        model = pickle.load(model_file)
+        # Leer el contenido del archivo
+        model_content = model_file.read()
+        
+        # Intentar cargar con diferentes protocolos de pickle
+        try:
+            model = pickle.loads(model_content)
+        except:
+            # Intentar con encoding latin1 para compatibilidad
+            model = pickle.loads(model_content, encoding='latin1')
+        
+        # Verificar que el modelo tiene la estructura esperada
+        required_keys = ['scaler', 'pca', 'umap', 'reference_frequencies']
+        for key in required_keys:
+            if key not in model:
+                st.error(f"El modelo no contiene la clave requerida: {key}")
+                return None
+                
+        st.success("✅ Modelo cargado exitosamente")
         return model
+        
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
+        st.error("Traceback:")
+        st.code(traceback.format_exc())
         return None
 
 # Función para hacer predicciones
@@ -126,44 +147,75 @@ def predict_spectra(model, spectra_data):
         X_new_scaled = model['scaler'].transform(X_new)
         pca_components_new = model['pca'].transform(X_new_scaled)
         
-        # Transformación UMAP (método seguro)
-        if 'X_pca_train' in model:
-            # Concatenar con datos de entrenamiento para consistencia
-            combined_data = np.vstack([model['X_pca_train'], pca_components_new])
-            combined_embedding = model['umap'].transform(combined_data)
-            umap_embedding_new = combined_embedding[len(model['X_pca_train']):]
-        else:
-            # Método alternativo
+        # Transformación UMAP
+        try:
+            # Intentar transformación UMAP normal
             umap_embedding_new = model['umap'].transform(pca_components_new)
+        except:
+            # Si falla, usar método alternativo
+            st.warning("Usando método alternativo para transformación UMAP")
+            if 'X_pca_train' in model:
+                # Concatenar con datos de entrenamiento para consistencia
+                combined_data = np.vstack([model['X_pca_train'], pca_components_new])
+                combined_embedding = model['umap'].transform(combined_data)
+                umap_embedding_new = combined_embedding[len(model['X_pca_train']):]
+            else:
+                # Método simple si no hay datos de entrenamiento
+                umap_embedding_new = pca_components_new[:, :2]  # Usar primeras 2 componentes PCA
         
-        # Predecir parámetros usando el embedding (esto es un placeholder)
-        # En un caso real, necesitarías un modelo regresor entrenado en el espacio UMAP
-        st.warning("""
-        ⚠️ Nota: Las predicciones mostradas son estimaciones basadas en la posición en el espacio UMAP.
-        Para predicciones precisas, se necesita un modelo regresor adicional entrenado en los parámetros físicos.
-        """)
+        # Predecir parámetros basados en la posición en el espacio de características
+        # Esta es una aproximación simplificada - en producción usarías un modelo regresor
+        
+        # Obtener rangos de parámetros del modelo de entrenamiento si están disponibles
+        if 'y' in model and model['y'] is not None and len(model['y']) > 0:
+            y_train = model['y']
+            logn_range = [np.min(y_train[:, 0]), np.max(y_train[:, 0])] if len(y_train) > 0 else [12.0, 16.0]
+            tex_range = [np.min(y_train[:, 1]), np.max(y_train[:, 1])] if len(y_train) > 0 else [10.0, 300.0]
+            velo_range = [np.min(y_train[:, 2]), np.max(y_train[:, 2])] if len(y_train) > 0 else [0.0, 10.0]
+            fwhm_range = [np.min(y_train[:, 3]), np.max(y_train[:, 3])] if len(y_train) > 0 else [1.0, 10.0]
+        else:
+            # Valores por defecto si no hay datos de entrenamiento
+            logn_range = [12.0, 16.0]
+            tex_range = [10.0, 300.0]
+            velo_range = [0.0, 10.0]
+            fwhm_range = [1.0, 10.0]
+        
+        # Normalizar las coordenadas UMAP/PCA al rango [0, 1]
+        if len(umap_embedding_new) > 0:
+            umap_x_norm = (umap_embedding_new[:, 0] - np.min(umap_embedding_new[:, 0])) / (np.max(umap_embedding_new[:, 0]) - np.min(umap_embedding_new[:, 0]) + 1e-10)
+            umap_y_norm = (umap_embedding_new[:, 1] - np.min(umap_embedding_new[:, 1])) / (np.max(umap_embedding_new[:, 1]) - np.min(umap_embedding_new[:, 1]) + 1e-10)
+        else:
+            umap_x_norm = np.array([0.5])
+            umap_y_norm = np.array([0.5])
         
         # Crear DataFrame con resultados
         results = []
         for i, (formula, filename) in enumerate(zip(formulas, filenames)):
-            # Estimación basada en posición en el espacio UMAP (esto es simplificado)
-            # En una implementación real, usarías un modelo de regresión
+            # Estimación basada en posición en el espacio de características
+            # Esta es una aproximación simplificada
+            logn_est = logn_range[0] + umap_x_norm[i] * (logn_range[1] - logn_range[0])
+            tex_est = tex_range[0] + umap_y_norm[i] * (tex_range[1] - tex_range[0])
+            velo_est = velo_range[0] + umap_x_norm[i] * (velo_range[1] - velo_range[0])
+            fwhm_est = fwhm_range[0] + umap_y_norm[i] * (fwhm_range[1] - fwhm_range[0])
+            
             results.append({
                 'Filename': filename,
                 'Formula': formula,
-                'UMAP_X': umap_embedding_new[i, 0],
-                'UMAP_Y': umap_embedding_new[i, 1],
-                'logn_estimated': 13.0 + umap_embedding_new[i, 0] * 0.5,  # Placeholder
-                'tex_estimated': 50.0 + umap_embedding_new[i, 1] * 20.0,   # Placeholder
-                'velo_estimated': umap_embedding_new[i, 0] * 2.0,          # Placeholder
-                'fwhm_estimated': 5.0 + umap_embedding_new[i, 1] * 1.0,    # Placeholder
-                'PCA_Components': pca_components_new[i].tolist()
+                'UMAP_X': umap_embedding_new[i, 0] if i < len(umap_embedding_new) else 0,
+                'UMAP_Y': umap_embedding_new[i, 1] if i < len(umap_embedding_new) else 0,
+                'logn_estimated': logn_est,
+                'tex_estimated': tex_est,
+                'velo_estimated': velo_est,
+                'fwhm_estimated': fwhm_est,
+                'PCA_Components': pca_components_new[i].tolist() if i < len(pca_components_new) else []
             })
         
         return pd.DataFrame(results), umap_embedding_new, pca_components_new
         
     except Exception as e:
         st.error(f"Error during prediction: {str(e)}")
+        st.error("Traceback:")
+        st.code(traceback.format_exc())
         return None, None, None
 
 # Función para visualizar resultados
@@ -173,8 +225,8 @@ def create_visualizations(model, df_results, umap_embedding_new, pca_components_
     # 1. UMAP con datos de entrenamiento y nuevas predicciones
     fig_umap = go.Figure()
     
-    # Datos de entrenamiento
-    if 'embedding' in model:
+    # Datos de entrenamiento (si están disponibles)
+    if 'embedding' in model and model['embedding'] is not None and len(model['embedding']) > 0:
         fig_umap.add_trace(go.Scatter(
             x=model['embedding'][:, 0],
             y=model['embedding'][:, 1],
@@ -234,14 +286,21 @@ def create_visualizations(model, df_results, umap_embedding_new, pca_components_
     
     # 3. Espectros cargados (primeros 5)
     spectrum_fig = go.Figure()
-    for i, (idx, row) in enumerate(df_results.head(5).iterrows()):
-        spectrum_fig.add_trace(go.Scatter(
-            x=model['reference_frequencies'],
-            y=model['scaler'].inverse_transform([pca_components_new[i]])[0],
-            mode='lines',
-            name=f"{row['Formula']} ({row['Filename']})",
-            hovertemplate='<b>%{fullData.name}</b><br>Freq: %{x}<br>Intensity: %{y}<extra></extra>'
-        ))
+    if 'reference_frequencies' in model and model['reference_frequencies'] is not None:
+        for i, (idx, row) in enumerate(df_results.head(5).iterrows()):
+            if i < len(pca_components_new):
+                try:
+                    # Reconstruir el espectro escalado inverso
+                    reconstructed = model['scaler'].inverse_transform([pca_components_new[i]])[0]
+                    spectrum_fig.add_trace(go.Scatter(
+                        x=model['reference_frequencies'],
+                        y=reconstructed,
+                        mode='lines',
+                        name=f"{row['Formula']} ({row['Filename']})",
+                        hovertemplate='<b>%{fullData.name}</b><br>Freq: %{x}<br>Intensity: %{y}<extra></extra>'
+                    ))
+                except:
+                    continue
     
     spectrum_fig.update_layout(
         title='Espectros Interpolados (Primeros 5)',
@@ -274,25 +333,25 @@ def main():
             model = load_model(model_file)
         
         if model is not None:
-            st.success(f"✅ Modelo cargado: {len(model.get('X', []))} espectros de entrenamiento")
-            
             # Mostrar información del modelo
             with st.expander("📋 Información del Modelo"):
                 col1, col2 = st.columns(2)
                 with col1:
                     st.write("**Parámetros:**")
-                    st.write(f"- Muestras de entrenamiento: {model.get('sample_size', 'N/A')}")
                     st.write(f"- Componentes PCA: {model.get('n_components', 'N/A')}")
                     st.write(f"- Umbral de varianza: {model.get('variance_threshold', 'N/A')}")
+                    st.write(f"- Longitud objetivo: {model.get('target_length', 'N/A')}")
                 
                 with col2:
                     st.write("**Rangos de parámetros:**")
-                    if 'y' in model:
+                    if 'y' in model and model['y'] is not None and len(model['y']) > 0:
                         y = model['y']
                         st.write(f"- logn: {y[:, 0].min():.2f} to {y[:, 0].max():.2f}")
                         st.write(f"- tex: {y[:, 1].min():.2f} to {y[:, 1].max():.2f}")
                         st.write(f"- velo: {y[:, 2].min():.2f} to {y[:, 2].max():.2f}")
                         st.write(f"- fwhm: {y[:, 3].min():.2f} to {y[:, 3].max():.2f}")
+                    else:
+                        st.write("No hay datos de entrenamiento disponibles")
             
             # Procesar espectros si se han cargado
             if spectra_files and process_btn:
@@ -317,6 +376,12 @@ def main():
                         df_results, umap_embedding, pca_components = predict_spectra(model, spectra_data)
                         
                         if df_results is not None:
+                            # Mostrar advertencia sobre las predicciones
+                            st.warning("""
+                            ⚠️ **Nota importante:** Las predicciones mostradas son estimaciones basadas en la posición en el espacio de características.
+                            Para predicciones precisas, se necesita un modelo regresor adicional entrenado específicamente en los parámetros físicos.
+                            """)
+                            
                             # Mostrar resultados en tabla
                             st.subheader("📊 Resultados de Predicción")
                             
@@ -356,7 +421,7 @@ def main():
                     else:
                         st.warning("No se pudieron procesar los espectros")
         else:
-            st.error("Error al cargar el modelo")
+            st.error("Error al cargar el modelo. Verifica que el archivo .pkl sea válido.")
     else:
         # Instrucciones cuando no hay modelo cargado
         st.info("👈 Por favor, carga un modelo preentrenado en la barra lateral para comenzar.")
