@@ -29,8 +29,8 @@ st.markdown("""
     .info-box {background-color: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;}
     .stButton>button {width: 100%;}
     .main-header {
-        font-size: 1rem;
-        color: #1E88E5;
+        font-size: 1.5rem;
+        color: #1f77b4;
         text-align: center;
         margin-bottom: 2rem;
     }
@@ -657,6 +657,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
