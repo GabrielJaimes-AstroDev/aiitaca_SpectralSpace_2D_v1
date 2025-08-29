@@ -296,7 +296,7 @@ def main():
         'tex': model['y'][:, 1],
         'velo': model['y'][:, 2],
         'fwhm': model['y'][:, 3],
-        'type': 'Predicted'  # Changed from 'Training' to 'Predicted'
+        'type': 'Predicted'
     })
     
     if len(results['umap_embedding_new']) > 0:
@@ -306,8 +306,8 @@ def main():
         new_df = pd.DataFrame({
             'umap_x': results['umap_embedding_new'][:, 0],
             'umap_y': results['umap_embedding_new'][:, 1],
-            'formula': truncated_filenames,  # Use truncated filenames for legend
-            'full_filename': results['filenames_new'],  # Keep full filename for hover
+            'formula': truncated_filenames,
+            'full_filename': results['filenames_new'],
             'logn': results['y_new'][:, 0],
             'tex': results['y_new'][:, 1],
             'velo': results['y_new'][:, 2],
@@ -324,7 +324,7 @@ def main():
     fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='formula', 
                      symbol='type', hover_data=['logn', 'tex', 'velo', 'fwhm', 'full_filename' if 'full_filename' in combined_df.columns else 'filename'],
                      title='UMAP Projection of Molecular Spectra',
-                     color_discrete_sequence=px.colors.qualitative.Set3)  # Use qualitative color set
+                     color_discrete_sequence=px.colors.qualitative.Set3)
     
     # Update layout to make it square and set colors/sizes
     fig.update_layout(
@@ -333,16 +333,16 @@ def main():
         autosize=False,
         legend=dict(
             itemsizing='constant',
-            font=dict(size=10)  # Smaller font for legend
+            font=dict(size=10)
         )
     )
     
     # Update marker size and color for different types
     for i, trace in enumerate(fig.data):
-        if trace.name == 'Predicted':  # Changed from 'Training' to 'Predicted'
-            trace.marker.update(size=10, color='black', symbol='circle')  # Black and larger for Predicted
+        if trace.name == 'Predicted':
+            trace.marker.update(size=10, color='black', symbol='circle')
         elif trace.name == 'New':
-            trace.marker.update(size=8, color='red', symbol='diamond')  # Different color/symbol for New
+            trace.marker.update(size=8, color='red', symbol='diamond')
     
     st.plotly_chart(fig, use_container_width=True)
     
@@ -359,9 +359,9 @@ def main():
         row = (i // 2) + 1
         col = (i % 2) + 1
         
-        # Add training data
+        # Add training data with #2ca02c color
         fig.add_trace(
-            go.Histogram(x=train_df[param], name='Predicted', opacity=0.7, marker_color='black'),  # Changed to black
+            go.Histogram(x=train_df[param], name='Predicted', opacity=0.7, marker_color='#2ca02c'),
             row=row, col=col
         )
         
@@ -395,7 +395,13 @@ def main():
                 truncated_title = truncate_title(f"Spectrum: {results['filenames_new'][selected_idx]}")
                 
                 spectrum_fig = go.Figure()
-
+                spectrum_fig.add_trace(go.Scatter(
+                    x=model['reference_frequencies'],
+                    y=results['X_new'][selected_idx],
+                    mode='lines',
+                    name=truncate_filename(results['filenames_new'][selected_idx]),
+                    line=dict(color='blue', width=2)
+                ))
                 
                 spectrum_fig.update_layout(
                     title=truncated_title,
@@ -403,7 +409,7 @@ def main():
                     yaxis_title='Intensity',
                     hovermode='x unified',
                     height=500,
-                    width=600,  # Fixed width to prevent shrinking
+                    width=600,
                     showlegend=True
                 )
                 
@@ -421,10 +427,10 @@ def main():
                     if neighbor_indices:
                         # Calculate average parameters
                         avg_params = [
-                            np.nanmean(model['y'][neighbor_indices, 0]),  # logn
-                            np.nanmean(model['y'][neighbor_indices, 1]),  # tex
-                            np.nanmean(model['y'][neighbor_indices, 2]),  # velo
-                            np.nanmean(model['y'][neighbor_indices, 3])   # fwhm
+                            np.nanmean(model['y'][neighbor_indices, 0]),
+                            np.nanmean(model['y'][neighbor_indices, 1]),
+                            np.nanmean(model['y'][neighbor_indices, 2]),
+                            np.nanmean(model['y'][neighbor_indices, 3])
                         ]
                         
                         # Find most common formula in neighbors
@@ -634,5 +640,3 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
-
-
