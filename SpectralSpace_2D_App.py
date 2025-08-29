@@ -176,6 +176,12 @@ def find_knn_neighbors(training_embeddings, new_embeddings, k=5):
     
     return all_neighbor_indices
 
+def truncate_filename(filename, max_length=20):
+    """Truncate filename if it's too long for legend"""
+    if len(filename) > max_length:
+        return filename[:max_length-3] + "..."
+    return filename
+
 def main():
 
      # Add the header image and title
@@ -288,10 +294,14 @@ def main():
     })
     
     if len(results['umap_embedding_new']) > 0:
+        # Create truncated filenames for legend
+        truncated_filenames = [truncate_filename(fname) for fname in results['filenames_new']]
+        
         new_df = pd.DataFrame({
             'umap_x': results['umap_embedding_new'][:, 0],
             'umap_y': results['umap_embedding_new'][:, 1],
-            'formula': results['filenames_new'],  # Use filename instead of formula
+            'formula': truncated_filenames,  # Use truncated filenames for legend
+            'full_filename': results['filenames_new'],  # Keep full filename for hover
             'logn': results['y_new'][:, 0],
             'tex': results['y_new'][:, 1],
             'velo': results['y_new'][:, 2],
@@ -306,14 +316,18 @@ def main():
     
     # Create interactive UMAP plot
     fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='formula', 
-                     symbol='type', hover_data=['logn', 'tex', 'velo', 'fwhm', 'filename'],
+                     symbol='type', hover_data=['logn', 'tex', 'velo', 'fwhm', 'full_filename' if 'full_filename' in combined_df.columns else 'filename'],
                      title='UMAP Projection of Molecular Spectra')
     
     # Update layout to make it square and set colors for new spectra
     fig.update_layout(
         width=700,
         height=700,
-        autosize=False
+        autosize=False,
+        legend=dict(
+            itemsizing='constant',
+            font=dict(size=10)  # Smaller font for legend
+        )
     )
     
     # Update marker size and color for new spectra
@@ -365,15 +379,33 @@ def main():
             col1, col2 = st.columns(2)
             
             with col1:
-                # Show spectrum plot
+                # Show interactive spectrum plot using Plotly
                 st.markdown("**Spectrum Visualization**")
-                fig, ax = plt.subplots(figsize=(10, 6))
-                ax.plot(model['reference_frequencies'], results['X_new'][selected_idx])
-                ax.set_xlabel('Frequency (Hz)')
-                ax.set_ylabel('Intensity')
-                ax.set_title(f"Spectrum: {results['filenames_new'][selected_idx]}")
-                ax.grid(True, alpha=0.3)
-                st.pyplot(fig)
+                
+                # Create interactive plot
+                spectrum_fig = go.Figure()
+                spectrum_fig.add_trace(go.Scatter(
+                    x=model['reference_frequencies'],
+                    y=results['X_new'][selected_idx],
+                    mode='lines',
+                    name=results['filenames_new'][selected_idx],
+                    line=dict(color='blue', width=2)
+                ))
+                
+                spectrum_fig.update_layout(
+                    title=f"Spectrum: {results['filenames_new'][selected_idx]}",
+                    xaxis_title='Frequency (Hz)',
+                    yaxis_title='Intensity',
+                    hovermode='x unified',
+                    height=500,
+                    showlegend=True
+                )
+                
+                # Add grid and other styling
+                spectrum_fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+                spectrum_fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+                
+                st.plotly_chart(spectrum_fig, use_container_width=True)
             
             with col2:
                 # Calculate average parameters from KNN neighbors
