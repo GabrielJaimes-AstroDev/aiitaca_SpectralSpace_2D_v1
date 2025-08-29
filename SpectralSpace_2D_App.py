@@ -329,7 +329,7 @@ def main():
     # Create interactive UMAP plot with custom color sequence to avoid repetition
     fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='formula', 
                      symbol='type', hover_data=['logn', 'tex', 'velo', 'fwhm', 'full_filename' if 'full_filename' in combined_df.columns else 'filename'],
-                     title='UMAP Projection of Molecular Spectra',
+                     
                      color_discrete_sequence=px.colors.qualitative.Set3)
     
     # Update layout to make it square and set colors/sizes
@@ -657,6 +657,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
