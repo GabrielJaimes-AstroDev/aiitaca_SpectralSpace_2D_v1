@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 # Set page configuration
 st.set_page_config(
-    page_title="B. 2D Spectral Space Analyzer",
+    page_title="B.2D Spectral Space Analyzer",
     page_icon="🧪",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -700,5 +700,6 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
