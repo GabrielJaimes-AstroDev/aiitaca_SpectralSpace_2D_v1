@@ -361,7 +361,7 @@ def main():
         
         # Add training data with #2ca02c color
         fig.add_trace(
-            go.Histogram(x=train_df[param], name='Predicted', opacity=0.7, marker_color='#2ca02c'),
+            go.Histogram(x=train_df[param], name='Predicted', opacity=0.7, marker_color='blue'),
             row=row, col=col
         )
         
@@ -648,4 +648,5 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
