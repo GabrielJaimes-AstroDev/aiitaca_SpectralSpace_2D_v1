@@ -182,6 +182,12 @@ def truncate_filename(filename, max_length=20):
         return filename[:max_length-3] + "..."
     return filename
 
+def truncate_title(title, max_length=50):
+    """Truncate title if it's too long for plot"""
+    if len(title) > max_length:
+        return title[:max_length-3] + "..."
+    return title
+
 def main():
 
      # Add the header image and title
@@ -290,7 +296,7 @@ def main():
         'tex': model['y'][:, 1],
         'velo': model['y'][:, 2],
         'fwhm': model['y'][:, 3],
-        'type': 'Training'
+        'type': 'Predicted'  # Changed from 'Training' to 'Predicted'
     })
     
     if len(results['umap_embedding_new']) > 0:
@@ -314,12 +320,13 @@ def main():
     else:
         combined_df = train_df
     
-    # Create interactive UMAP plot
+    # Create interactive UMAP plot with custom color sequence to avoid repetition
     fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='formula', 
                      symbol='type', hover_data=['logn', 'tex', 'velo', 'fwhm', 'full_filename' if 'full_filename' in combined_df.columns else 'filename'],
-                     title='UMAP Projection of Molecular Spectra')
+                     title='UMAP Projection of Molecular Spectra',
+                     color_discrete_sequence=px.colors.qualitative.Set3)  # Use qualitative color set
     
-    # Update layout to make it square and set colors for new spectra
+    # Update layout to make it square and set colors/sizes
     fig.update_layout(
         width=700,
         height=700,
@@ -330,10 +337,12 @@ def main():
         )
     )
     
-    # Update marker size and color for new spectra
+    # Update marker size and color for different types
     for i, trace in enumerate(fig.data):
-        if trace.name == 'New':
-            trace.marker.update(size=12, color='black')
+        if trace.name == 'Predicted':  # Changed from 'Training' to 'Predicted'
+            trace.marker.update(size=10, color='black', symbol='circle')  # Black and larger for Predicted
+        elif trace.name == 'New':
+            trace.marker.update(size=8, color='red', symbol='diamond')  # Different color/symbol for New
     
     st.plotly_chart(fig, use_container_width=True)
     
@@ -352,7 +361,7 @@ def main():
         
         # Add training data
         fig.add_trace(
-            go.Histogram(x=train_df[param], name='Training', opacity=0.7, marker_color='blue'),
+            go.Histogram(x=train_df[param], name='Predicted', opacity=0.7, marker_color='black'),  # Changed to black
             row=row, col=col
         )
         
@@ -382,22 +391,25 @@ def main():
                 # Show interactive spectrum plot using Plotly
                 st.markdown("**Spectrum Visualization**")
                 
-                # Create interactive plot
+                # Create interactive plot with truncated title if needed
+                truncated_title = truncate_title(f"Spectrum: {results['filenames_new'][selected_idx]}")
+                
                 spectrum_fig = go.Figure()
                 spectrum_fig.add_trace(go.Scatter(
                     x=model['reference_frequencies'],
                     y=results['X_new'][selected_idx],
                     mode='lines',
-                    name=results['filenames_new'][selected_idx],
+                    name=truncate_filename(results['filenames_new'][selected_idx]),
                     line=dict(color='blue', width=2)
                 ))
                 
                 spectrum_fig.update_layout(
-                    title=f"Spectrum: {results['filenames_new'][selected_idx]}",
+                    title=truncated_title,
                     xaxis_title='Frequency (Hz)',
                     yaxis_title='Intensity',
                     hovermode='x unified',
                     height=500,
+                    width=600,  # Fixed width to prevent shrinking
                     showlegend=True
                 )
                 
@@ -467,40 +479,62 @@ def main():
                     
                     st.table(pd.DataFrame(neighbor_data))
                     
-                    # Create plot showing neighbors
+                    # Create plot showing neighbors with hover information for all points
                     fig = go.Figure()
                     
-                    # Add all training data
+                    # Add all training data with hover information
+                    training_hover_text = [
+                        f"Formula: {form}<br>log(n): {logn:.2f}<br>T_ex: {tex:.2f} K<br>Velocity: {velo:.2f} km/s<br>FWHM: {fwhm:.2f} km/s"
+                        for form, logn, tex, velo, fwhm in zip(
+                            train_df['formula'], train_df['logn'], train_df['tex'], 
+                            train_df['velo'], train_df['fwhm']
+                        )
+                    ]
+                    
                     fig.add_trace(go.Scatter(
                         x=train_df['umap_x'], y=train_df['umap_y'],
                         mode='markers',
                         marker=dict(color='lightgray', size=5),
-                        name='Training Data',
-                        hoverinfo='skip'
+                        name='Predicted Data',
+                        text=training_hover_text,
+                        hoverinfo='text'
                     ))
                     
                     # Add neighbors
                     neighbor_x = [model['embedding'][idx, 0] for idx in neighbor_indices]
                     neighbor_y = [model['embedding'][idx, 1] for idx in neighbor_indices]
                     neighbor_formulas = [model['formulas'][idx] for idx in neighbor_indices]
+                    neighbor_logn = [model['y'][idx, 0] for idx in neighbor_indices]
+                    neighbor_tex = [model['y'][idx, 1] for idx in neighbor_indices]
+                    neighbor_velo = [model['y'][idx, 2] for idx in neighbor_indices]
+                    neighbor_fwhm = [model['y'][idx, 3] for idx in neighbor_indices]
+                    
+                    neighbor_hover_text = [
+                        f"Formula: {form}<br>log(n): {logn:.2f}<br>T_ex: {tex:.2f} K<br>Velocity: {velo:.2f} km/s<br>FWHM: {fwhm:.2f} km/s"
+                        for form, logn, tex, velo, fwhm in zip(
+                            neighbor_formulas, neighbor_logn, neighbor_tex, neighbor_velo, neighbor_fwhm
+                        )
+                    ]
                     
                     fig.add_trace(go.Scatter(
                         x=neighbor_x, y=neighbor_y,
                         mode='markers',
                         marker=dict(color='blue', size=10),
                         name='Neighbors',
-                        text=neighbor_formulas,
+                        text=neighbor_hover_text,
                         hoverinfo='text'
                     ))
                     
                     # Add selected spectrum
+                    selected_hover_text = f"File: {results['filenames_new'][selected_idx]}<br>Formula: {most_common_formula}"
+                    
                     fig.add_trace(go.Scatter(
                         x=[results['umap_embedding_new'][selected_idx, 0]],
                         y=[results['umap_embedding_new'][selected_idx, 1]],
                         mode='markers',
                         marker=dict(color='red', size=15, symbol='star'),
                         name='Selected Spectrum',
-                        text=[results['filenames_new'][selected_idx]],  # Use filename instead of formula
+                        text=[selected_hover_text],
                         hoverinfo='text'
                     ))
                     
