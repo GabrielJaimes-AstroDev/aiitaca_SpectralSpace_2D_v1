@@ -404,13 +404,21 @@ def main():
                 ))
                 
                 spectrum_fig.update_layout(
-                    title=truncated_title,
+                    title={
+                        'text': truncated_title,   # tu texto
+                        'x': 0.5,                  # centrado horizontalmente (opcional)
+                        'xanchor': 'center',
+                        'yanchor': 'top',
+                        'font': {
+                            'size': 11              # <--- aquí ajustas el tamaño
+                        }
+                    },
                     xaxis_title='Frequency (Hz)',
                     yaxis_title='Intensity',
                     hovermode='x unified',
                     height=500,
                     width=600,
-                    showlegend=True
+                    showlegend=False
                 )
                 
                 # Add grid and other styling
@@ -640,3 +648,4 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
