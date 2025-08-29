@@ -24,7 +24,12 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
-    .main-header2 {font-size: 2.5rem; color: #2ca02c; margin-bottom: 1rem;}
+    .main-header2 {
+        font-size: 2.5rem; 
+        color: #2ca02c; 
+        margin-bottom: 1rem;
+        text-align: center;  /* <-- AÑADE ESTA LÍNEA */
+    }
     .section-header {font-size: 1.8rem; color: #1f77b4; border-bottom: 2px solid #1f77b4; padding-bottom: 0.3rem; margin-top: 1.5rem;}
     .info-box {background-color: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;}
     .stButton>button {width: 100%;}
@@ -695,3 +700,4 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
