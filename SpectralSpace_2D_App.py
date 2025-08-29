@@ -302,7 +302,7 @@ def main():
         'tex': model['y'][:, 1],
         'velo': model['y'][:, 2],
         'fwhm': model['y'][:, 3],
-        'type': 'Predicted'
+        'type': 'Training'
     })
     
     if len(results['umap_embedding_new']) > 0:
@@ -319,7 +319,7 @@ def main():
             'velo': results['y_new'][:, 2],
             'fwhm': results['y_new'][:, 3],
             'filename': results['filenames_new'],
-            'type': 'New'
+            'type': 'Predicted'
         })
         
         combined_df = pd.concat([train_df, new_df], ignore_index=True)
@@ -327,52 +327,66 @@ def main():
         combined_df = train_df
     
     # Create interactive UMAP plot with custom color sequence to avoid repetition
-    # For training data (Predicted), we'll use a single color (black) and group them all as "Predicted"
-    # For new data, we'll use different colors for each formula
+    # Use a color cycle that ensures unique colors for each formula
+    unique_formulas = combined_df['formula'].unique()
+    color_cycle = px.colors.qualitative.Set3 + px.colors.qualitative.Pastel + px.colors.qualitative.Dark24
+    color_map = {formula: color_cycle[i % len(color_cycle)] for i, formula in enumerate(unique_formulas)}
     
-    # Create a new column for coloring - for training data, use "Predicted", for new data use the formula
-    combined_df['color_group'] = combined_df.apply(
-        lambda row: 'Predicted' if row['type'] == 'Predicted' else row['formula'], 
-        axis=1
-    )
+    fig = go.Figure()
     
-    # Get unique color groups and assign colors
-    unique_groups = combined_df['color_group'].unique()
-    color_map = {}
+    # Add training data points
+    for formula in train_df['formula'].unique():
+        formula_data = train_df[train_df['formula'] == formula]
+        fig.add_trace(go.Scatter(
+            x=formula_data['umap_x'],
+            y=formula_data['umap_y'],
+            mode='markers',
+            name=f"{formula} (Training)",
+            marker=dict(
+                color=color_map[formula],
+                size=8,
+                symbol='circle'
+            ),
+            hoverinfo='text',
+            text=[f"Formula: {row['formula']}<br>log(n): {row['logn']:.2f}<br>T_ex: {row['tex']:.2f} K<br>Velocity: {row['velo']:.2f} km/s<br>FWHM: {row['fwhm']:.2f} km/s<br>Type: Training" 
+                  for _, row in formula_data.iterrows()],
+            legendgroup=formula,
+            showlegend=True
+        ))
     
-    # Assign black to all Predicted points
-    color_map['Predicted'] = 'black'
-    
-    # Assign distinct colors to new spectra using a qualitative color scale
-    new_groups = [group for group in unique_groups if group != 'Predicted']
-    colors = px.colors.qualitative.Set3 + px.colors.qualitative.Set1 + px.colors.qualitative.Pastel
-    
-    for i, group in enumerate(new_groups):
-        color_map[group] = colors[i % len(colors)]
-    
-    # Create the figure
-    fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='color_group',
-                     symbol='type', 
-                     hover_data=['logn', 'tex', 'velo', 'fwhm', 'full_filename' if 'full_filename' in combined_df.columns else 'filename'],
-                     color_discrete_map=color_map)
+    # Add predicted data points (uploaded spectra) in black
+    if len(results['umap_embedding_new']) > 0:
+        for i, row in new_df.iterrows():
+            fig.add_trace(go.Scatter(
+                x=[row['umap_x']],
+                y=[row['umap_y']],
+                mode='markers',
+                name=f"{row['formula']} (Predicted)",
+                marker=dict(
+                    color='black',
+                    size=10,
+                    symbol='diamond'
+                ),
+                hoverinfo='text',
+                text=[f"File: {row['full_filename']}<br>Formula: {row['formula']}<br>log(n): {row['logn']:.2f}<br>T_ex: {row['tex']:.2f} K<br>Velocity: {row['velo']:.2f} km/s<br>FWHM: {row['fwhm']:.2f} km/s<br>Type: Predicted"],
+                legendgroup=row['formula'],
+                showlegend=True
+            ))
     
     # Update layout to make it square and set colors/sizes
     fig.update_layout(
         width=700,
         height=700,
         autosize=False,
+        title="UMAP Projection of Spectral Data",
+        xaxis_title="UMAP Dimension 1",
+        yaxis_title="UMAP Dimension 2",
         legend=dict(
             itemsizing='constant',
-            font=dict(size=10)
+            font=dict(size=10),
+            tracegroupgap=0
         )
     )
-    
-    # Update marker size and style for different types
-    for i, trace in enumerate(fig.data):
-        if trace.name == 'Predicted':
-            trace.marker.update(size=10, symbol='circle')
-        elif 'New' in trace.name:
-            trace.marker.update(size=8, symbol='diamond')
     
     st.plotly_chart(fig, use_container_width=True)
     
@@ -391,18 +405,18 @@ def main():
         
         # Add training data with #2ca02c color
         fig.add_trace(
-            go.Histogram(x=train_df[param], name='Predicted', opacity=0.7, marker_color='orange'),
+            go.Histogram(x=train_df[param], name='Training', opacity=0.7, marker_color='orange'),
             row=row, col=col
         )
         
         # Add new data if available
         if len(results['umap_embedding_new']) > 0:
             fig.add_trace(
-                go.Histogram(x=new_df[param], name='New', opacity=0.7, marker_color='red'),
+                go.Histogram(x=new_df[param], name='Predicted', opacity=0.7, marker_color='black'),
                 row=row, col=col
             )
     
-    fig.update_layout(height=600, showlegend=False)
+    fig.update_layout(height=600, showlegend=False, title_text="Parameter Distributions")
     st.plotly_chart(fig, use_container_width=True)
     
     # Individual spectrum analysis
@@ -443,7 +457,7 @@ def main():
                             'size': 11
                         }
                     },
-                    xaxis_title='Frequency (Hz)', 
+                    xaxis_title='Frequency (Hz)',
                     yaxis_title='Intensity',
                     hovermode='x unified',
                     height=500,
@@ -533,7 +547,7 @@ def main():
                         x=train_df['umap_x'], y=train_df['umap_y'],
                         mode='markers',
                         marker=dict(color='lightgray', size=5),
-                        name='Predicted Data',
+                        name='Training Data',
                         text=training_hover_text,
                         hoverinfo='text'
                     ))
