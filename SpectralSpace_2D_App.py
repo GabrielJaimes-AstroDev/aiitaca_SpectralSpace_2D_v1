@@ -327,10 +327,34 @@ def main():
         combined_df = train_df
     
     # Create interactive UMAP plot with custom color sequence to avoid repetition
-    fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='formula', 
-                     symbol='type', hover_data=['logn', 'tex', 'velo', 'fwhm', 'full_filename' if 'full_filename' in combined_df.columns else 'filename'],
-                     
-                     color_discrete_sequence=px.colors.qualitative.Set3)
+    # For training data (Predicted), we'll use a single color (black) and group them all as "Predicted"
+    # For new data, we'll use different colors for each formula
+    
+    # Create a new column for coloring - for training data, use "Predicted", for new data use the formula
+    combined_df['color_group'] = combined_df.apply(
+        lambda row: 'Predicted' if row['type'] == 'Predicted' else row['formula'], 
+        axis=1
+    )
+    
+    # Get unique color groups and assign colors
+    unique_groups = combined_df['color_group'].unique()
+    color_map = {}
+    
+    # Assign black to all Predicted points
+    color_map['Predicted'] = 'black'
+    
+    # Assign distinct colors to new spectra using a qualitative color scale
+    new_groups = [group for group in unique_groups if group != 'Predicted']
+    colors = px.colors.qualitative.Set3 + px.colors.qualitative.Set1 + px.colors.qualitative.Pastel
+    
+    for i, group in enumerate(new_groups):
+        color_map[group] = colors[i % len(colors)]
+    
+    # Create the figure
+    fig = px.scatter(combined_df, x='umap_x', y='umap_y', color='color_group',
+                     symbol='type', 
+                     hover_data=['logn', 'tex', 'velo', 'fwhm', 'full_filename' if 'full_filename' in combined_df.columns else 'filename'],
+                     color_discrete_map=color_map)
     
     # Update layout to make it square and set colors/sizes
     fig.update_layout(
@@ -343,12 +367,12 @@ def main():
         )
     )
     
-    # Update marker size and color for different types
+    # Update marker size and style for different types
     for i, trace in enumerate(fig.data):
         if trace.name == 'Predicted':
-            trace.marker.update(size=10, color='black', symbol='circle')
-        elif trace.name == 'New':
-            trace.marker.update(size=8, color='red', symbol='diamond')
+            trace.marker.update(size=10, symbol='circle')
+        elif 'New' in trace.name:
+            trace.marker.update(size=8, symbol='diamond')
     
     st.plotly_chart(fig, use_container_width=True)
     
@@ -411,15 +435,15 @@ def main():
                 
                 spectrum_fig.update_layout(
                     title={
-                        'text': truncated_title,   # tu texto
-                        'x': 0.5,                  # centrado horizontalmente (opcional)
+                        'text': truncated_title,
+                        'x': 0.5,
                         'xanchor': 'center',
                         'yanchor': 'top',
                         'font': {
-                            'size': 11              # <--- aquí ajustas el tamaño
+                            'size': 11
                         }
                     },
-                    xaxis_title='Frequency (Hz)',
+                    xaxis_title='Frequency (Hz)', 
                     yaxis_title='Intensity',
                     hovermode='x unified',
                     height=500,
@@ -657,17 +681,3 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
