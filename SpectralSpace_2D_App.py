@@ -199,6 +199,109 @@ def truncate_title(title, max_length=50):
         return title[:max_length-3] + "..."
     return title
 
+def calculate_parameter_uncertainty(model, neighbor_indices):
+    """Calculate uncertainty of parameters based on KNN neighbors"""
+    uncertainties = []
+    expected_values = []
+    
+    for i in range(4):  # For each parameter (logn, tex, velo, fwhm)
+        param_values = model['y'][neighbor_indices, i]
+        valid_values = param_values[~np.isnan(param_values)]
+        
+        if len(valid_values) > 0:
+            expected_value = np.mean(valid_values)
+            uncertainty = np.std(valid_values)
+        else:
+            expected_value = np.nan
+            uncertainty = np.nan
+            
+        expected_values.append(expected_value)
+        uncertainties.append(uncertainty)
+    
+    return expected_values, uncertainties
+
+def plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors=20):
+    """Plot how parameters vary with increasing number of KNN neighbors"""
+    if selected_idx >= len(results['umap_embedding_new']):
+        return None
+    
+    new_embedding = results['umap_embedding_new'][selected_idx]
+    filename = results['filenames_new'][selected_idx]
+    
+    # Calculate parameters for different numbers of neighbors
+    neighbor_range = range(1, min(max_neighbors + 1, len(model['embedding']) + 1))
+    
+    param_data = {
+        'n_neighbors': [],
+        'logn_mean': [], 'logn_std': [],
+        'tex_mean': [], 'tex_std': [],
+        'velo_mean': [], 'velo_std': [],
+        'fwhm_mean': [], 'fwhm_std': []
+    }
+    
+    for k in neighbor_range:
+        knn = NearestNeighbors(n_neighbors=k, metric='euclidean')
+        knn.fit(model['embedding'])
+        distances, indices = knn.kneighbors([new_embedding])
+        
+        param_data['n_neighbors'].append(k)
+        
+        for i, param_name in enumerate(['logn', 'tex', 'velo', 'fwhm']):
+            param_values = model['y'][indices[0], i]
+            valid_values = param_values[~np.isnan(param_values)]
+            
+            if len(valid_values) > 0:
+                param_data[f'{param_name}_mean'].append(np.mean(valid_values))
+                param_data[f'{param_name}_std'].append(np.std(valid_values))
+            else:
+                param_data[f'{param_name}_mean'].append(np.nan)
+                param_data[f'{param_name}_std'].append(np.nan)
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
+    )
+    
+    param_names = ['logn', 'tex', 'velo', 'fwhm']
+    param_labels = ['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
+    
+    for i, param in enumerate(param_names):
+        row = (i // 2) + 1
+        col = (i % 2) + 1
+        
+        # Add mean line
+        fig.add_trace(
+            go.Scatter(
+                x=param_data['n_neighbors'],
+                y=param_data[f'{param}_mean'],
+                mode='lines+markers',
+                name=f'{param_labels[i]} Mean',
+                line=dict(color='blue'),
+                error_y=dict(
+                    type='data',
+                    array=param_data[f'{param}_std'],
+                    visible=True,
+                    color='blue',
+                    thickness=1.5,
+                    width=2
+                )
+            ),
+            row=row, col=col
+        )
+        
+        # Update axes
+        fig.update_xaxes(title_text='Number of Neighbors', row=row, col=col)
+        fig.update_yaxes(title_text=param_labels[i], row=row, col=col)
+    
+    fig.update_layout(
+        height=600,
+        title_text=f"Parameter Convergence vs. Number of Neighbors: {truncate_filename(filename)}",
+        showlegend=False
+    )
+    
+    return fig
+
 def main():
 
      # Add the header image and title
@@ -232,6 +335,10 @@ def main():
         st.session_state.results = None
     if 'spectra_files' not in st.session_state:
         st.session_state.spectra_files = []
+    if 'expected_values' not in st.session_state:
+        st.session_state.expected_values = None
+    if 'uncertainties' not in st.session_state:
+        st.session_state.uncertainties = None
     
     # Sidebar for inputs
     with st.sidebar:
@@ -258,6 +365,7 @@ def main():
         # Analysis parameters
         st.subheader("3. Analysis Parameters")
         knn_neighbors = st.slider("Number of KNN neighbors", min_value=1, max_value=20, value=5)
+        max_neighbors_plot = st.slider("Max neighbors for convergence plot", min_value=5, max_value=50, value=20)
         
         if st.button("Analyze Spectra") and st.session_state.model is not None and st.session_state.spectra_files:
             with st.spinner("Analyzing spectra..."):
@@ -265,9 +373,53 @@ def main():
                     model = st.session_state.model
                     results = analyze_spectra(model, st.session_state.spectra_files, knn_neighbors)
                     st.session_state.results = results
+                    
+                    # Calculate expected values and uncertainties
+                    if len(results['umap_embedding_new']) > 0:
+                        expected_values_list = []
+                        uncertainties_list = []
+                        
+                        for i in range(len(results['umap_embedding_new'])):
+                            if i < len(results['knn_neighbors']):
+                                expected_values, uncertainties = calculate_parameter_uncertainty(
+                                    model, results['knn_neighbors'][i]
+                                )
+                                expected_values_list.append(expected_values)
+                                uncertainties_list.append(uncertainties)
+                        
+                        st.session_state.expected_values = expected_values_list
+                        st.session_state.uncertainties = uncertainties_list
+                    
                     st.success("Analysis completed!")
                 except Exception as e:
                     st.error(f"Error during analysis: {str(e)}")
+    
+    # Display expected values and uncertainties in sidebar if available
+    if (st.session_state.expected_values is not None and 
+        st.session_state.uncertainties is not None and
+        st.session_state.results is not None and
+        len(st.session_state.results['filenames_new']) > 0):
+        
+        with st.sidebar:
+            st.subheader("Estimated Parameters")
+            
+            # Select a spectrum to show parameters for
+            selected_idx = st.selectbox(
+                "Select spectrum for parameter estimates",
+                range(len(st.session_state.results['filenames_new'])),
+                format_func=lambda i: st.session_state.results['filenames_new'][i]
+            )
+            
+            if selected_idx is not None:
+                param_labels = ['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
+                expected_vals = st.session_state.expected_values[selected_idx]
+                uncertainties = st.session_state.uncertainties[selected_idx]
+                
+                for i, (label, exp_val, uncert) in enumerate(zip(param_labels, expected_vals, uncertainties)):
+                    if not np.isnan(exp_val) and not np.isnan(uncert):
+                        st.markdown(f"**{label}**: {exp_val:.2f} ± {uncert:.2f}")
+                    else:
+                        st.markdown(f"**{label}**: N/A")
     
     # Main content area
     if st.session_state.model is None:
@@ -490,14 +642,24 @@ def main():
                             np.nanmean(model['y'][neighbor_indices, 3])
                         ]
                         
+                        # Calculate standard deviations
+                        std_params = [
+                            np.nanstd(model['y'][neighbor_indices, 0]),
+                            np.nanstd(model['y'][neighbor_indices, 1]),
+                            np.nanstd(model['y'][neighbor_indices, 2]),
+                            np.nanstd(model['y'][neighbor_indices, 3])
+                        ]
+                        
                         # Find most common formula in neighbors
                         neighbor_formulas = [model['formulas'][idx] for idx in neighbor_indices]
                         most_common_formula = max(set(neighbor_formulas), key=neighbor_formulas.count)
                     else:
                         avg_params = [np.nan, np.nan, np.nan, np.nan]
+                        std_params = [np.nan, np.nan, np.nan, np.nan]
                         most_common_formula = "Unknown"
                 else:
                     avg_params = [np.nan, np.nan, np.nan, np.nan]
+                    std_params = [np.nan, np.nan, np.nan, np.nan]
                     most_common_formula = "Unknown"
                 
                 # Show parameters
@@ -505,16 +667,22 @@ def main():
                 param_data = {
                     'Parameter': param_labels,
                     'Value': [
-                        f"{avg_params[0]:.2f}" if not np.isnan(avg_params[0]) else "N/A",
-                        f"{avg_params[1]:.2f}" if not np.isnan(avg_params[1]) else "N/A",
-                        f"{avg_params[2]:.2f}" if not np.isnan(avg_params[2]) else "N/A",
-                        f"{avg_params[3]:.2f}" if not np.isnan(avg_params[3]) else "N/A"
+                        f"{avg_params[0]:.2f} ± {std_params[0]:.2f}" if not np.isnan(avg_params[0]) else "N/A",
+                        f"{avg_params[1]:.2f} ± {std_params[1]:.2f}" if not np.isnan(avg_params[1]) else "N/A",
+                        f"{avg_params[2]:.2f} ± {std_params[2]:.2f}" if not np.isnan(avg_params[2]) else "N/A",
+                        f"{avg_params[3]:.2f} ± {std_params[3]:.2f}" if not np.isnan(avg_params[3]) else "N/A"
                     ]
                 }
                 st.table(pd.DataFrame(param_data))
                 
                 # Show molecule formula
                 st.markdown(f"**Molecule Formula**: {most_common_formula}")
+            
+            # Parameter convergence plot
+            st.markdown("**Parameter Convergence vs. Number of Neighbors**")
+            convergence_fig = plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors_plot)
+            if convergence_fig:
+                st.plotly_chart(convergence_fig, use_container_width=True)
             
             # KNN Neighbors analysis
             st.markdown("**K-Nearest Neighbors Analysis**")
@@ -628,6 +796,23 @@ def main():
                 'fwhm': results['y_new'][:, 3]
             })
             
+            # Add expected values and uncertainties if available
+            if (st.session_state.expected_values is not None and 
+                st.session_state.uncertainties is not None):
+                
+                expected_array = np.array(st.session_state.expected_values)
+                uncertainties_array = np.array(st.session_state.uncertainties)
+                
+                results_df['logn_expected'] = expected_array[:, 0]
+                results_df['tex_expected'] = expected_array[:, 1]
+                results_df['velo_expected'] = expected_array[:, 2]
+                results_df['fwhm_expected'] = expected_array[:, 3]
+                
+                results_df['logn_uncertainty'] = uncertainties_array[:, 0]
+                results_df['tex_uncertainty'] = uncertainties_array[:, 1]
+                results_df['velo_uncertainty'] = uncertainties_array[:, 2]
+                results_df['fwhm_uncertainty'] = uncertainties_array[:, 3]
+            
             # Convert to CSV
             csv = results_df.to_csv(index=False)
             st.download_button(
@@ -700,7 +885,3 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
-
-
-
-
