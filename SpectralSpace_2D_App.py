@@ -220,7 +220,7 @@ def calculate_parameter_uncertainty(model, neighbor_indices):
     
     return expected_values, uncertainties
 
-def plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors=20):
+def plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors=20, expected_values=None, expected_errors=None):
     """Plot how parameters vary with increasing number of KNN neighbors"""
     if selected_idx >= len(results['umap_embedding_new']):
         return None
@@ -257,6 +257,11 @@ def plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors=20):
                 param_data[f'{param_name}_mean'].append(np.nan)
                 param_data[f'{param_name}_std'].append(np.nan)
     
+    # Calculate average of max neighbors
+    max_neighbors_avg = {}
+    for i, param_name in enumerate(['logn', 'tex', 'velo', 'fwhm']):
+        max_neighbors_avg[param_name] = param_data[f'{param_name}_mean'][-1] if len(param_data[f'{param_name}_mean']) > 0 else np.nan
+    
     # Create subplots
     fig = make_subplots(
         rows=2, cols=2,
@@ -276,19 +281,55 @@ def plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors=20):
                 x=param_data['n_neighbors'],
                 y=param_data[f'{param}_mean'],
                 mode='lines+markers',
-                name=f'{param_labels[i]} Mean',
-                line=dict(color='blue'),
-                error_y=dict(
-                    type='data',
-                    array=param_data[f'{param}_std'],
-                    visible=True,
-                    color='blue',
-                    thickness=1.5,
-                    width=2
-                )
+                name=f'{param_labels[i]}',
+                line=dict(color='blue')
             ),
             row=row, col=col
         )
+        
+        # Add average line for max neighbors
+        if not np.isnan(max_neighbors_avg[param]):
+            fig.add_trace(
+                go.Scatter(
+                    x=[neighbor_range[0], neighbor_range[-1]],
+                    y=[max_neighbors_avg[param], max_neighbors_avg[param]],
+                    mode='lines',
+                    name=f'{param_labels[i]} Avg (max neighbors)',
+                    line=dict(color='blue', dash='dash'),
+                    showlegend=False
+                ),
+                row=row, col=col
+            )
+        
+        # Add expected value line if provided
+        if expected_values is not None and expected_errors is not None and not np.isnan(expected_values[i]):
+            fig.add_trace(
+                go.Scatter(
+                    x=[neighbor_range[0], neighbor_range[-1]],
+                    y=[expected_values[i], expected_values[i]],
+                    mode='lines',
+                    name=f'{param_labels[i]} Expected',
+                    line=dict(color='red'),
+                    showlegend=False
+                ),
+                row=row, col=col
+            )
+            
+            # Add error band if error is provided
+            if not np.isnan(expected_errors[i]):
+                fig.add_trace(
+                    go.Scatter(
+                        x=[neighbor_range[0], neighbor_range[-1], neighbor_range[-1], neighbor_range[0]],
+                        y=[expected_values[i] - expected_errors[i], expected_values[i] - expected_errors[i], 
+                           expected_values[i] + expected_errors[i], expected_values[i] + expected_errors[i]],
+                        fill='toself',
+                        fillcolor='rgba(255, 0, 0, 0.2)',
+                        line=dict(color='rgba(255, 255, 255, 0)'),
+                        name=f'{param_labels[i]} Error Band',
+                        showlegend=False
+                    ),
+                    row=row, col=col
+                )
         
         # Update axes
         fig.update_xaxes(title_text='Number of Neighbors', row=row, col=col)
@@ -300,7 +341,7 @@ def plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors=20):
         showlegend=False
     )
     
-    return fig
+    return fig, max_neighbors_avg
 
 def main():
 
@@ -339,6 +380,12 @@ def main():
         st.session_state.expected_values = None
     if 'uncertainties' not in st.session_state:
         st.session_state.uncertainties = None
+    if 'user_expected_values' not in st.session_state:
+        st.session_state.user_expected_values = [np.nan, np.nan, np.nan, np.nan]
+    if 'user_expected_errors' not in st.session_state:
+        st.session_state.user_expected_errors = [np.nan, np.nan, np.nan, np.nan]
+    if 'max_neighbors_avg' not in st.session_state:
+        st.session_state.max_neighbors_avg = None
     
     # Sidebar for inputs
     with st.sidebar:
@@ -366,6 +413,26 @@ def main():
         st.subheader("3. Analysis Parameters")
         knn_neighbors = st.slider("Number of KNN neighbors", min_value=1, max_value=20, value=5)
         max_neighbors_plot = st.slider("Max neighbors for convergence plot", min_value=5, max_value=50, value=20)
+        
+        # Optional expected values input
+        st.subheader("4. Expected Values (Optional)")
+        st.markdown("Enter expected values and errors for comparison:")
+        
+        param_labels = ['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
+        user_expected_values = []
+        user_expected_errors = []
+        
+        for i, label in enumerate(param_labels):
+            col1, col2 = st.columns(2)
+            with col1:
+                value = st.number_input(f"{label} value", value=float('nan'), key=f"exp_val_{i}")
+                user_expected_values.append(value)
+            with col2:
+                error = st.number_input(f"{label} error", value=float('nan'), min_value=0.0, key=f"exp_err_{i}")
+                user_expected_errors.append(error)
+        
+        st.session_state.user_expected_values = user_expected_values
+        st.session_state.user_expected_errors = user_expected_errors
         
         if st.button("Analyze Spectra") and st.session_state.model is not None and st.session_state.spectra_files:
             with st.spinner("Analyzing spectra..."):
@@ -667,10 +734,10 @@ def main():
                 param_data = {
                     'Parameter': param_labels,
                     'Value': [
-                        f"{avg_params[0]:.2f} ± {std_params[0]:.2f}" if not np.isnan(avg_params[0]) else "N/A",
-                        f"{avg_params[1]:.2f} ± {std_params[1]:.2f}" if not np.isnan(avg_params[1]) else "N/A",
-                        f"{avg_params[2]:.2f} ± {std_params[2]:.2f}" if not np.isnan(avg_params[2]) else "N/A",
-                        f"{avg_params[3]:.2f} ± {std_params[3]:.2f}" if not np.isnan(avg_params[3]) else "N/A"
+                        f"{avg_params[0]:.2f}" if not np.isnan(avg_params[0]) else "N/A",
+                        f"{avg_params[1]:.2f}" if not np.isnan(avg_params[1]) else "N/A",
+                        f"{avg_params[2]:.2f}" if not np.isnan(avg_params[2]) else "N/A",
+                        f"{avg_params[3]:.2f}" if not np.isnan(avg_params[3]) else "N/A"
                     ]
                 }
                 st.table(pd.DataFrame(param_data))
@@ -680,9 +747,27 @@ def main():
             
             # Parameter convergence plot
             st.markdown("**Parameter Convergence vs. Number of Neighbors**")
-            convergence_fig = plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors_plot)
+            convergence_fig, max_neighbors_avg = plot_parameter_vs_neighbors(
+                model, results, selected_idx, max_neighbors_plot,
+                st.session_state.user_expected_values, st.session_state.user_expected_errors
+            )
+            st.session_state.max_neighbors_avg = max_neighbors_avg
+            
             if convergence_fig:
                 st.plotly_chart(convergence_fig, use_container_width=True)
+                
+                # Show average values for max neighbors
+                st.markdown("**Average Values for Maximum Neighbors**")
+                avg_data = {
+                    'Parameter': param_labels,
+                    'Average Value': [
+                        f"{max_neighbors_avg['logn']:.2f}" if not np.isnan(max_neighbors_avg['logn']) else "N/A",
+                        f"{max_neighbors_avg['tex']:.2f}" if not np.isnan(max_neighbors_avg['tex']) else "N/A",
+                        f"{max_neighbors_avg['velo']:.2f}" if not np.isnan(max_neighbors_avg['velo']) else "N/A",
+                        f"{max_neighbors_avg['fwhm']:.2f}" if not np.isnan(max_neighbors_avg['fwhm']) else "N/A"
+                    ]
+                }
+                st.table(pd.DataFrame(avg_data))
             
             # KNN Neighbors analysis
             st.markdown("**K-Nearest Neighbors Analysis**")
