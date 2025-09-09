@@ -287,20 +287,7 @@ def plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors=20, 
             row=row, col=col
         )
         
-        # Add average line for max neighbors
-        if not np.isnan(max_neighbors_avg[param]):
-            fig.add_trace(
-                go.Scatter(
-                    x=[neighbor_range[0], neighbor_range[-1]],
-                    y=[max_neighbors_avg[param], max_neighbors_avg[param]],
-                    mode='lines',
-                    name=f'{param_labels[i]} Avg (max neighbors)',
-                    line=dict(color='blue', dash='dash'),
-                    showlegend=False
-                ),
-                row=row, col=col
-            )
-        
+       
         # Add expected value line if provided
         if expected_values is not None and expected_errors is not None and not np.isnan(expected_values[i]):
             fig.add_trace(
@@ -1065,6 +1052,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
