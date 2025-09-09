@@ -503,7 +503,7 @@ def main():
         st.subheader("4. Expected Values (Optional)")
         st.markdown("Enter expected values and errors for comparison:")
         
-        param_labels = ['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
+        param_labels = ['log(N)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
         user_expected_values = []
         user_expected_errors = []
         
@@ -1065,4 +1065,5 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
