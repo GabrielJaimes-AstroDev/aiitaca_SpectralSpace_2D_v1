@@ -265,7 +265,7 @@ def plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors=20, 
     # Create subplots
     fig = make_subplots(
         rows=2, cols=2,
-        subplot_titles=['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
+        subplot_titles=['log(N)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
     )
     
     param_names = ['logn', 'tex', 'velo', 'fwhm']
@@ -1065,6 +1065,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
