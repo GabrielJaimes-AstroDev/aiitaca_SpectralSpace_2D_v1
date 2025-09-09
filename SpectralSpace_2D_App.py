@@ -269,7 +269,7 @@ def plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors=20, 
     )
     
     param_names = ['logn', 'tex', 'velo', 'fwhm']
-    param_labels = ['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
+    param_labels = ['log(N)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
     
     for i, param in enumerate(param_names):
         row = (i // 2) + 1
@@ -370,7 +370,7 @@ def plot_neighbors_logn_tex(model, results, selected_idx, knn_neighbors, expecte
         marker=dict(color='blue', size=10),
         name='Neighbors',
         text=neighbor_formulas,
-        hovertemplate='<b>Formula:</b> %{text}<br><b>log(n):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
+        hovertemplate='<b>Formula:</b> %{text}<br><b>log(N):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
     ))
     
     # Add average of neighbors
@@ -394,7 +394,7 @@ def plot_neighbors_logn_tex(model, results, selected_idx, knn_neighbors, expecte
             mode='markers',
             marker=dict(color='green', size=15, symbol='diamond'),
             name='Expected Value',
-            hovertemplate='<b>Expected</b><br><b>log(n):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
+            hovertemplate='<b>Expected</b><br><b>log(N):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
         ))
         
         # Add error bars if provided
@@ -413,14 +413,14 @@ def plot_neighbors_logn_tex(model, results, selected_idx, knn_neighbors, expecte
                 y=[expected_values[1], expected_values[1]],
                 mode='lines',
                 line=dict(color='green', width=2, dash='dash'),
-                name='log(n) Error',
+                name='log(N) Error',
                 showlegend=False
             ))
     
     # Update layout
     fig.update_layout(
         title=f"Neighbors in LogN vs T_ex Space (k={knn_neighbors})",
-        xaxis_title="log(n)",
+        xaxis_title="log(N)",
         yaxis_title="T_ex (K)",
         height=500,
         showlegend=True
@@ -563,7 +563,7 @@ def main():
             )
             
             if selected_idx is not None:
-                param_labels = ['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
+                param_labels = ['log(N)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
                 expected_vals = st.session_state.expected_values[selected_idx]
                 uncertainties = st.session_state.uncertainties[selected_idx]
                 
@@ -657,7 +657,7 @@ def main():
                 symbol='circle'
             ),
             hoverinfo='text',
-            text=[f"Formula: {row['formula']}<br>log(n): {row['logn']:.2f}<br>T_ex: {row['tex']:.2f} K<br>Velocity: {row['velo']:.2f} km/s<br>FWHM: {row['fwhm']:.2f} km/s<br>Type: Training" 
+            text=[f"Formula: {row['formula']}<br>log(N): {row['logn']:.2f}<br>T_ex: {row['tex']:.2f} K<br>Velocity: {row['velo']:.2f} km/s<br>FWHM: {row['fwhm']:.2f} km/s<br>Type: Training" 
                   for _, row in formula_data.iterrows()],
             legendgroup=formula,
             showlegend=True
@@ -677,7 +677,7 @@ def main():
                     symbol='diamond'
                 ),
                 hoverinfo='text',
-                text=[f"File: {row['full_filename']}<br>Formula: {row['formula']}<br>log(n): {row['logn']:.2f}<br>T_ex: {row['tex']:.2f} K<br>Velocity: {row['velo']:.2f} km/s<br>FWHM: {row['fwhm']:.2f} km/s<br>Type: Predicted"],
+                text=[f"File: {row['full_filename']}<br>Formula: {row['formula']}<br>log(N): {row['logn']:.2f}<br>T_ex: {row['tex']:.2f} K<br>Velocity: {row['velo']:.2f} km/s<br>FWHM: {row['fwhm']:.2f} km/s<br>Type: Predicted"],
                 legendgroup=row['formula'],
                 showlegend=True
             ))
@@ -1065,6 +1065,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
