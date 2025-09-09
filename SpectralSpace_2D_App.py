@@ -703,7 +703,7 @@ def main():
     st.subheader("B. Parameter Distributions")
     
     param_names = ['logn', 'tex', 'velo', 'fwhm']
-    param_labels = ['log(n)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
+    param_labels = ['log(N)', 'T_ex (K)', 'Velocity (km/s)', 'FWHM (km/s)']
     
     # Create subplots for each parameter
     fig = make_subplots(rows=2, cols=2, subplot_titles=param_labels)
@@ -1065,5 +1065,6 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
