@@ -331,7 +331,7 @@ def plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors=20, 
     return fig, max_neighbors_avg
 
 def plot_neighbors_logn_tex(model, results, selected_idx, knn_neighbors, expected_values=None, expected_errors=None):
-    """Plot neighbors in LogN vs Tex space with expected values"""
+    """Plot neighbors in LogN vs Tex space with expected values and average of neighbors with errors"""
     if selected_idx >= len(results['umap_embedding_new']):
         return None
     
@@ -345,6 +345,12 @@ def plot_neighbors_logn_tex(model, results, selected_idx, knn_neighbors, expecte
     neighbor_logn = model['y'][neighbor_indices, 0]
     neighbor_tex = model['y'][neighbor_indices, 1]
     neighbor_formulas = [model['formulas'][idx] for idx in neighbor_indices]
+    
+    # Calculate average and standard deviation of neighbors
+    avg_logn = np.nanmean(neighbor_logn)
+    avg_tex = np.nanmean(neighbor_tex)
+    std_logn = np.nanstd(neighbor_logn)
+    std_tex = np.nanstd(neighbor_tex)
     
     # Create the plot
     fig = go.Figure()
@@ -360,21 +366,46 @@ def plot_neighbors_logn_tex(model, results, selected_idx, knn_neighbors, expecte
         hovertemplate='<b>Formula:</b> %{text}<br><b>log(N):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
     ))
     
-    # Add average of neighbors
-    avg_logn = np.nanmean(neighbor_logn)
-    avg_tex = np.nanmean(neighbor_tex)
+    # Add average of neighbors with error bars
+    if not np.isnan(avg_logn) and not np.isnan(avg_tex):
+        fig.add_trace(go.Scatter(
+            x=[avg_logn],
+            y=[avg_tex],
+            mode='markers',
+            marker=dict(color='red', size=15, symbol='star'),
+            name='Average of Neighbors',
+            hovertemplate='<b>Average</b><br><b>log(N):</b> %{x:.2f} ± %{customdata[0]:.2f}<br><b>T_ex:</b> %{y:.2f} ± %{customdata[1]:.2f} K<extra></extra>',
+            customdata=[[std_logn, std_tex]]
+        ))
+        
+        # Add error bars for average of neighbors (standard deviation)
+        if not np.isnan(std_logn) and std_logn > 0:
+            fig.add_trace(go.Scatter(
+                x=[avg_logn - std_logn, avg_logn + std_logn],
+                y=[avg_tex, avg_tex],
+                mode='lines',
+                line=dict(color='red', width=2, dash='dash'),
+                name='log(N) Std Dev',
+                showlegend=False,
+                hovertemplate='<b>log(N) Std Dev:</b> ±%{x:.2f}<extra></extra>'
+            ))
+        
+        if not np.isnan(std_tex) and std_tex > 0:
+            fig.add_trace(go.Scatter(
+                x=[avg_logn, avg_logn],
+                y=[avg_tex - std_tex, avg_tex + std_tex],
+                mode='lines',
+                line=dict(color='red', width=2, dash='dash'),
+                name='T_ex Std Dev',
+                showlegend=False,
+                hovertemplate='<b>T_ex Std Dev:</b> ±%{y:.2f} K<extra></extra>'
+            ))
     
-    fig.add_trace(go.Scatter(
-        x=[avg_logn],
-        y=[avg_tex],
-        mode='markers',
-        marker=dict(color='red', size=15, symbol='star'),
-        name='Average of Neighbors',
-        hovertemplate='<b>Average</b><br><b>log(N):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
-    ))
-    
-    # Add expected value if provided
-    if expected_values is not None and not np.isnan(expected_values[0]) and not np.isnan(expected_values[1]):
+    # Add expected value if provided with error bars
+    if (expected_values is not None and 
+        not np.isnan(expected_values[0]) and 
+        not np.isnan(expected_values[1])):
+        
         fig.add_trace(go.Scatter(
             x=[expected_values[0]],
             y=[expected_values[1]],
@@ -384,24 +415,32 @@ def plot_neighbors_logn_tex(model, results, selected_idx, knn_neighbors, expecte
             hovertemplate='<b>Expected</b><br><b>log(N):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
         ))
         
-        # Add error bars if provided
-        if expected_errors is not None and not np.isnan(expected_errors[0]) and not np.isnan(expected_errors[1]):
-            fig.add_trace(go.Scatter(
-                x=[expected_values[0], expected_values[0]],
-                y=[expected_values[1] - expected_errors[1], expected_values[1] + expected_errors[1]],
-                mode='lines',
-                line=dict(color='green', width=2, dash='dash'),
-                name='T_ex Error',
-                showlegend=False
-            ))
+        # Add error bars for expected value if provided
+        if (expected_errors is not None and 
+            not np.isnan(expected_errors[0]) and 
+            not np.isnan(expected_errors[1]) and
+            expected_errors[0] > 0 and expected_errors[1] > 0):
             
+            # log(N) error bar
             fig.add_trace(go.Scatter(
                 x=[expected_values[0] - expected_errors[0], expected_values[0] + expected_errors[0]],
                 y=[expected_values[1], expected_values[1]],
                 mode='lines',
-                line=dict(color='green', width=2, dash='dash'),
+                line=dict(color='green', width=3),
                 name='log(N) Error',
-                showlegend=False
+                showlegend=False,
+                hovertemplate='<b>log(N) Error:</b> ±%{x:.2f}<extra></extra>'
+            ))
+            
+            # T_ex error bar
+            fig.add_trace(go.Scatter(
+                x=[expected_values[0], expected_values[0]],
+                y=[expected_values[1] - expected_errors[1], expected_values[1] + expected_errors[1]],
+                mode='lines',
+                line=dict(color='green', width=3),
+                name='T_ex Error',
+                showlegend=False,
+                hovertemplate='<b>T_ex Error:</b> ±%{y:.2f} K<extra></extra>'
             ))
     
     # Update layout
@@ -410,7 +449,13 @@ def plot_neighbors_logn_tex(model, results, selected_idx, knn_neighbors, expecte
         xaxis_title="log(N)",
         yaxis_title="T_ex (K)",
         height=500,
-        showlegend=True
+        showlegend=True,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        )
     )
     
     return fig
@@ -1052,6 +1097,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
