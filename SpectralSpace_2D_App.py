@@ -876,7 +876,7 @@ def main():
                     for idx in neighbor_indices:
                         neighbor_data.append({
                             'Formula': model['formulas'][idx],
-                            'log(n)': f"{model['y'][idx, 0]:.2f}",
+                            'log(N)': f"{model['y'][idx, 0]:.2f}",
                             'T_ex (K)': f"{model['y'][idx, 1]:.2f}",
                             'Velocity': f"{model['y'][idx, 2]:.2f}",
                             'FWHM': f"{model['y'][idx, 3]:.2f}"
@@ -889,7 +889,7 @@ def main():
                     
                     # Add all training data with hover information
                     training_hover_text = [
-                        f"Formula: {form}<br>log(n): {logn:.2f}<br>T_ex: {tex:.2f} K<br>Velocity: {velo:.2f} km/s<br>FWHM: {fwhm:.2f} km/s"
+                        f"Formula: {form}<br>log(N): {logn:.2f}<br>T_ex: {tex:.2f} K<br>Velocity: {velo:.2f} km/s<br>FWHM: {fwhm:.2f} km/s"
                         for form, logn, tex, velo, fwhm in zip(
                             train_df['formula'], train_df['logn'], train_df['tex'], 
                             train_df['velo'], train_df['fwhm']
@@ -915,7 +915,7 @@ def main():
                     neighbor_fwhm = [model['y'][idx, 3] for idx in neighbor_indices]
                     
                     neighbor_hover_text = [
-                        f"Formula: {form}<br>log(n): {logn:.2f}<br>T_ex: {tex:.2f} K<br>Velocity: {velo:.2f} km/s<br>FWHM: {fwhm:.2f} km/s"
+                        f"Formula: {form}<br>log(N): {logn:.2f}<br>T_ex: {tex:.2f} K<br>Velocity: {velo:.2f} km/s<br>FWHM: {fwhm:.2f} km/s"
                         for form, logn, tex, velo, fwhm in zip(
                             neighbor_formulas, neighbor_logn, neighbor_tex, neighbor_velo, neighbor_fwhm
                         )
@@ -1065,6 +1065,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
