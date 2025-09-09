@@ -383,7 +383,7 @@ def plot_neighbors_logn_tex(model, results, selected_idx, knn_neighbors, expecte
         mode='markers',
         marker=dict(color='red', size=15, symbol='star'),
         name='Average of Neighbors',
-        hovertemplate='<b>Average</b><br><b>log(n):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
+        hovertemplate='<b>Average</b><br><b>log(N):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
     ))
     
     # Add expected value if provided
@@ -1065,6 +1065,7 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
 
 
 
