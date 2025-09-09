@@ -496,8 +496,8 @@ def main():
         
         # Analysis parameters
         st.subheader("3. Analysis Parameters")
-        knn_neighbors = st.slider("Number of KNN neighbors", min_value=1, max_value=20, value=5)
-        max_neighbors_plot = st.slider("Max neighbors for convergence plot", min_value=5, max_value=50, value=20)
+        knn_neighbors = st.slider("Number of KNN neighbors", min_value=1, max_value=50, value=5)
+        max_neighbors_plot = st.slider("Max neighbors for convergence plot", min_value=5, max_value=100, value=20)
         
         # Optional expected values input
         st.subheader("4. Expected Values (Optional)")
@@ -1065,3 +1065,4 @@ def analyze_spectra(model, spectra_files, knn_neighbors=5):
 
 if __name__ == "__main__":
     main()
+
