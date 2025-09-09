@@ -343,6 +343,91 @@ def plot_parameter_vs_neighbors(model, results, selected_idx, max_neighbors=20, 
     
     return fig, max_neighbors_avg
 
+def plot_neighbors_logn_tex(model, results, selected_idx, knn_neighbors, expected_values=None, expected_errors=None):
+    """Plot neighbors in LogN vs Tex space with expected values"""
+    if selected_idx >= len(results['umap_embedding_new']):
+        return None
+    
+    # Get the neighbors for the selected spectrum
+    neighbor_indices = results['knn_neighbors'][selected_idx]
+    
+    if not neighbor_indices:
+        return None
+    
+    # Get the data for neighbors
+    neighbor_logn = model['y'][neighbor_indices, 0]
+    neighbor_tex = model['y'][neighbor_indices, 1]
+    neighbor_formulas = [model['formulas'][idx] for idx in neighbor_indices]
+    
+    # Create the plot
+    fig = go.Figure()
+    
+    # Add neighbors
+    fig.add_trace(go.Scatter(
+        x=neighbor_logn,
+        y=neighbor_tex,
+        mode='markers',
+        marker=dict(color='blue', size=10),
+        name='Neighbors',
+        text=neighbor_formulas,
+        hovertemplate='<b>Formula:</b> %{text}<br><b>log(n):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
+    ))
+    
+    # Add average of neighbors
+    avg_logn = np.nanmean(neighbor_logn)
+    avg_tex = np.nanmean(neighbor_tex)
+    
+    fig.add_trace(go.Scatter(
+        x=[avg_logn],
+        y=[avg_tex],
+        mode='markers',
+        marker=dict(color='red', size=15, symbol='star'),
+        name='Average of Neighbors',
+        hovertemplate='<b>Average</b><br><b>log(n):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
+    ))
+    
+    # Add expected value if provided
+    if expected_values is not None and not np.isnan(expected_values[0]) and not np.isnan(expected_values[1]):
+        fig.add_trace(go.Scatter(
+            x=[expected_values[0]],
+            y=[expected_values[1]],
+            mode='markers',
+            marker=dict(color='green', size=15, symbol='diamond'),
+            name='Expected Value',
+            hovertemplate='<b>Expected</b><br><b>log(n):</b> %{x:.2f}<br><b>T_ex:</b> %{y:.2f} K<extra></extra>'
+        ))
+        
+        # Add error bars if provided
+        if expected_errors is not None and not np.isnan(expected_errors[0]) and not np.isnan(expected_errors[1]):
+            fig.add_trace(go.Scatter(
+                x=[expected_values[0], expected_values[0]],
+                y=[expected_values[1] - expected_errors[1], expected_values[1] + expected_errors[1]],
+                mode='lines',
+                line=dict(color='green', width=2, dash='dash'),
+                name='T_ex Error',
+                showlegend=False
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=[expected_values[0] - expected_errors[0], expected_values[0] + expected_errors[0]],
+                y=[expected_values[1], expected_values[1]],
+                mode='lines',
+                line=dict(color='green', width=2, dash='dash'),
+                name='log(n) Error',
+                showlegend=False
+            ))
+    
+    # Update layout
+    fig.update_layout(
+        title=f"Neighbors in LogN vs T_ex Space (k={knn_neighbors})",
+        xaxis_title="log(n)",
+        yaxis_title="T_ex (K)",
+        height=500,
+        showlegend=True
+    )
+    
+    return fig
+
 def main():
 
      # Add the header image and title
@@ -681,7 +766,7 @@ def main():
                             'size': 11
                         }
                     },
-                    xaxis_title='Frequency (Hz)',
+                    xaxis_title='Frequency (Hz),
                     yaxis_title='Intensity',
                     hovermode='x unified',
                     height=500,
@@ -769,8 +854,18 @@ def main():
                 }
                 st.table(pd.DataFrame(avg_data))
             
+            # NEW: Plot neighbors in LogN vs Tex space
+            st.markdown("**D. Neighbors in LogN vs T_ex Space**")
+            logn_tex_fig = plot_neighbors_logn_tex(
+                model, results, selected_idx, knn_neighbors,
+                st.session_state.user_expected_values, st.session_state.user_expected_errors
+            )
+            
+            if logn_tex_fig:
+                st.plotly_chart(logn_tex_fig, use_container_width=True)
+            
             # KNN Neighbors analysis
-            st.markdown("**K-Nearest Neighbors Analysis**")
+            st.markdown("**E. K-Nearest Neighbors Analysis**")
             
             if 'knn_neighbors' in results and selected_idx < len(results['knn_neighbors']):
                 neighbor_indices = results['knn_neighbors'][selected_idx]
