@@ -766,7 +766,7 @@ def main():
                             'size': 11
                         }
                     },
-                    xaxis_title='Frequency (Hz),
+                    xaxis_title='Frequency (Hz)',
                     yaxis_title='Intensity',
                     hovermode='x unified',
                     height=500,
